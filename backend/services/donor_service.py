@@ -216,20 +216,31 @@ def get_donor_dashboard_stats(user_id: str):
     }
 
 def respond_to_request(donor_user_id: str, request_id: str, action: str):
-    """Donor accepts or rejects a blood request"""
+    """Donor accepts or rejects/declines a blood request"""
     db = get_db()
+    
+    # 1. Look up donor by userId first, then fallback to donor _id
     donor = db.donors.find_one({"userId": str(donor_user_id)})
+    if not donor:
+        try:
+            donor = db.donors.find_one({"_id": ObjectId(donor_user_id)})
+        except Exception:
+            pass
     if not donor:
         return None, "Donor profile not found."
     
-    req = db.blood_requests.find_one({"_id": ObjectId(request_id)})
+    # 2. Look up blood request
+    try:
+        req = db.blood_requests.find_one({"_id": ObjectId(request_id)})
+    except Exception:
+        req = None
     if not req:
         return None, "Blood request not found."
     
-    action_clean = action.strip().upper()
+    action_clean = (action or "").strip().upper()
     now = datetime.now(timezone.utc)
 
-    if action_clean == "ACCEPT":
+    if action_clean in ["ACCEPT", "ACCEPTED"]:
         # Update request status to ACCEPTED
         db.blood_requests.update_one(
             {"_id": ObjectId(request_id)},
@@ -237,8 +248,9 @@ def respond_to_request(donor_user_id: str, request_id: str, action: str):
                 "$set": {
                     "status": "ACCEPTED",
                     "acceptedDonorId": str(donor["_id"]),
-                    "acceptedDonorName": donor["name"],
-                    "acceptedDonorPhone": donor["phone"],
+                    "acceptedDonorUserId": str(donor.get("userId", "")),
+                    "acceptedDonorName": donor.get("name", "Donor"),
+                    "acceptedDonorPhone": donor.get("phone", ""),
                     "screeningStatus": "NOT_SUBMITTED",
                     "updatedAt": now
                 }
@@ -246,21 +258,28 @@ def respond_to_request(donor_user_id: str, request_id: str, action: str):
         )
 
         # Notify requester
-        create_notification(
-            recipient_id=req["requesterId"],
-            recipient_email=req.get("requesterEmail", ""),
-            title="Donor Accepted Your Request!",
-            message=f"Good news! Donor {donor['name']} ({donor['bloodGroup']}) has accepted your blood request for patient {req['patientName']}.",
-            notif_type="ACCEPTED",
-            related_id=request_id
-        )
+        if req.get("requesterId"):
+            try:
+                create_notification(
+                    recipient_id=req["requesterId"],
+                    recipient_email=req.get("requesterEmail", ""),
+                    title="Donor Accepted Your Request!",
+                    message=f"Good news! Donor {donor.get('name', 'A donor')} ({donor.get('bloodGroup', '')}) has accepted your blood request for patient {req.get('patientName', '')}.",
+                    notif_type="ACCEPTED",
+                    related_id=str(request_id)
+                )
+            except Exception as e:
+                print(f"[respond_to_request] Requester notification notice: {e}")
 
-        send_donation_status_email(
-            to_email=req.get("requesterEmail"),
-            recipient_name=req.get("requesterName", "Requester"),
-            status="ACCEPTED",
-            details=f"Donor {donor['name']} has accepted the blood request for patient {req['patientName']}."
-        )
+        try:
+            send_donation_status_email(
+                to_email=req.get("requesterEmail"),
+                recipient_name=req.get("requesterName", "Requester"),
+                status="ACCEPTED",
+                details=f"Donor {donor.get('name', 'A donor')} has accepted the blood request for patient {req.get('patientName', '')}."
+            )
+        except Exception as e:
+            print(f"[respond_to_request] Status email notice: {e}")
 
         return {
             "message": "Request accepted successfully. Please proceed to Donation Screening.",
@@ -268,16 +287,40 @@ def respond_to_request(donor_user_id: str, request_id: str, action: str):
             "screeningRequired": True
         }, None
 
-    elif action_clean == "REJECT":
-        # Notify requester
-        create_notification(
-            recipient_id=req["requesterId"],
-            recipient_email=req.get("requesterEmail", ""),
-            title="Donor Declined Request",
-            message=f"A prospective donor was unavailable for your blood request for patient {req['patientName']}. Other compatible donors are still searchable.",
-            notif_type="REJECTED",
-            related_id=request_id
-        )
-        return {"message": "You have declined this request."}, None
+    elif action_clean in ["DECLINE", "DECLINED", "REJECT", "REJECTED"]:
+        # If this donor was previously assigned as accepted donor and now declines, revert status to PENDING
+        if str(req.get("acceptedDonorId")) == str(donor["_id"]):
+            db.blood_requests.update_one(
+                {"_id": ObjectId(request_id)},
+                {
+                    "$set": {
+                        "status": "PENDING",
+                        "screeningStatus": "NOT_SUBMITTED",
+                        "updatedAt": now
+                    },
+                    "$unset": {
+                        "acceptedDonorId": "",
+                        "acceptedDonorUserId": "",
+                        "acceptedDonorName": "",
+                        "acceptedDonorPhone": ""
+                    }
+                }
+            )
 
-    return None, "Invalid response action. Allowed: ACCEPT or REJECT."
+        # Notify requester
+        if req.get("requesterId"):
+            try:
+                create_notification(
+                    recipient_id=req["requesterId"],
+                    recipient_email=req.get("requesterEmail", ""),
+                    title="Donor Declined Request",
+                    message=f"A prospective donor was unavailable for your blood request for patient {req.get('patientName', '')}. Other compatible donors are still searchable.",
+                    notif_type="REJECTED",
+                    related_id=str(request_id)
+                )
+            except Exception as e:
+                print(f"[respond_to_request] Requester decline notification notice: {e}")
+
+        return {"message": "You have declined this request.", "requestId": str(request_id)}, None
+
+    return None, "Invalid response action. Allowed: ACCEPT, DECLINE, or REJECT."

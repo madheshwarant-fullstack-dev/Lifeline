@@ -371,17 +371,13 @@ def api_respond_to_request(
     current_user: dict = Depends(require_role("DONOR"))
 ):
     action = payload.get("action", "").strip().upper()
-    if action not in ["ACCEPT", "DECLINE"]:
+    if action not in ["ACCEPT", "ACCEPTED", "DECLINE", "DECLINED", "REJECT", "REJECTED"]:
         return json_error("Action must be ACCEPT or DECLINE.", 400)
     
-    donor = get_donor_by_user_id(current_user["id"])
-    if not donor:
-        return json_error("Donor profile not found.", 404)
-    
-    res, err = respond_to_request(donor["id"], request_id, action)
+    res, err = respond_to_request(current_user["id"], request_id, action)
     if err:
         return json_error(err, 400)
-    return json_success(res, f"Request successfully {action.lower()}ed.")
+    return json_success(res, res.get("message", f"Request successfully processed."))
 
 @app.post("/api/donors/{donor_id}/contact", tags=["Donors"])
 def api_contact_donor(
