@@ -30,8 +30,12 @@ const Login = () => {
         else navigate('/requester/dashboard');
       }
     } catch (err) {
-      const msg = err.response?.data?.message || 'Invalid email or password. Please verify your credentials.';
-      setError(msg);
+      if (!err.response) {
+        setError('Cannot reach the backend server. Please make sure the backend is running on http://localhost:5000.');
+      } else {
+        const msg = err.response?.data?.message || 'Invalid email or password. Please verify your credentials.';
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
