@@ -190,9 +190,7 @@ def seed_database():
     # Check if admin already exists
     admin_exists = db.users.find_one({"email": "admin@bloodconnect.org"})
     if admin_exists:
-        # Run migration on existing documents to update to Indian geographic context
-        migrate_existing_data_to_india(db)
-        print("[Database Seed] Existing database synchronized with Indian cities and states.")
+        # Database already initialized and seeded
         return
 
     print("[Database Seed] Seeding initial users, donors, requests, and donations for India...")
