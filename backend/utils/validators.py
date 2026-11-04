@@ -38,13 +38,13 @@ def is_valid_phone(phone):
 
 def validate_registration(data):
     errors = []
-    name = data.get('name', '').strip()
-    email = data.get('email', '').strip()
-    phone = data.get('phone', '').strip()
-    password = data.get('password', '')
-    role = data.get('role', 'DONOR').strip().upper()
-    blood_group = data.get('bloodGroup', '').strip().upper()
-    city = data.get('city', '').strip()
+    name = (data.get('name') or '').strip()
+    email = (data.get('email') or '').strip()
+    phone = (data.get('phone') or '').strip()
+    password = data.get('password') or ''
+    role = (data.get('role') or 'DONOR').strip().upper()
+    blood_group = (data.get('bloodGroup') or '').strip().upper()
+    city = (data.get('city') or '').strip()
 
     if not name or len(name) < 2:
         errors.append("Full Name is required and must be at least 2 characters.")

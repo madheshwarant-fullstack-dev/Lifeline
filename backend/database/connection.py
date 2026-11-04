@@ -1,6 +1,5 @@
 import os
 import re
-import urllib.parse
 import pymongo
 from pymongo import ASCENDING, DESCENDING
 from bson import ObjectId
@@ -15,10 +14,9 @@ except Exception:
 
 _client = None
 _db = None
-_active_uri = None
 
 def get_safe_uri(uri: str) -> str:
-    """Masks database credentials in connection URI for safe logging without exposing secrets."""
+    """Masks database credentials in connection URI for safe logging."""
     if not uri:
         return ""
     try:
@@ -27,11 +25,11 @@ def get_safe_uri(uri: str) -> str:
         return "mongodb+srv://[credentials-hidden]"
 
 def create_client(uri: str):
-    """Creates a PyMongo MongoClient instance with robust timeouts and TLS settings."""
+    """Creates a PyMongo MongoClient instance with robust Atlas timeouts and TLS settings."""
     options = {
-        "serverSelectionTimeoutMS": 4000,
-        "connectTimeoutMS": 4000,
-        "socketTimeoutMS": 10000,
+        "serverSelectionTimeoutMS": 8000,
+        "connectTimeoutMS": 8000,
+        "socketTimeoutMS": 15000,
         "retryWrites": True,
         "appName": "LifelineBackend"
     }
@@ -52,83 +50,58 @@ def ping_db(client=None) -> tuple[bool, str]:
         err_str = str(e)
         if "tlsv1 alert internal error" in err_str.lower() or "serverselectiontimeouterror" in err_str.lower():
             diagnostic = (
-                "Atlas SSL/TLS handshake alert (IP Not Whitelisted). "
-                "Your current client IP must be added to MongoDB Atlas -> Network Access -> IP Access List."
+                "Atlas SSL/TLS handshake failed (IP Not Whitelisted). "
+                "Ensure your IP address is added to MongoDB Atlas -> Network Access -> IP Access List."
             )
             return False, diagnostic
         return False, err_str
 
 def get_client():
     """Returns singleton PyMongo client instance."""
-    global _client, _db, _active_uri
+    global _client, _db
     if _client is None:
         get_db()
     return _client
 
 def get_db():
-    """Returns the lifeline database instance with Atlas primary connection and local failover resilience."""
-    global _client, _db, _active_uri
+    """Returns the lifeline database instance from MongoDB Atlas."""
+    global _client, _db
     if _db is not None:
         return _db
 
-    primary_uri = Config.MONGO_URI or "mongodb+srv://lifeline_admin:Lifeline-123@lifeline.hpq3jzn.mongodb.net/lifeline?retryWrites=true&w=majority"
+    uri = Config.MONGO_URI or "mongodb+srv://lifeline_admin:Lifeline-123@lifeline.hpq3jzn.mongodb.net/lifeline?retryWrites=true&w=majority"
     db_name = Config.DB_NAME or "lifeline"
-    safe_primary = get_safe_uri(primary_uri)
+    safe_uri = get_safe_uri(uri)
 
-    # 1. Attempt Primary (MongoDB Atlas)
     try:
-        print(f"[MongoDB] Connecting to primary database at {safe_primary} ...")
-        client = create_client(primary_uri)
-        is_ok, msg = ping_db(client)
+        print(f"[MongoDB Atlas] Connecting to database '{db_name}' at {safe_uri} ...")
+        _client = create_client(uri)
+        is_ok, msg = ping_db(_client)
         if is_ok:
-            _client = client
             _db = _client[db_name]
-            _active_uri = primary_uri
-            print(f"[MongoDB Atlas] Successfully connected and pinged '{db_name}'.")
+            print(f"[MongoDB Atlas] Successfully connected to '{db_name}'.")
             init_indexes(_db)
             return _db
         else:
-            print(f"[MongoDB Atlas Network Warning] Ping to Atlas cluster unsuccessful: {msg}")
-    except Exception as e:
-        print(f"[MongoDB Atlas Warning] Connection error: {e}")
-
-    # 2. Resilient local fallback if local mongod is available
-    local_uri = "mongodb://127.0.0.1:27017/lifeline"
-    try:
-        print(f"[MongoDB Resilience] Checking local MongoDB instance at mongodb://127.0.0.1:27017/{db_name} ...")
-        local_client = create_client(local_uri)
-        is_local_ok, local_msg = ping_db(local_client)
-        if is_local_ok:
-            _client = local_client
+            print(f"[MongoDB Atlas Warning] Ping failed: {msg}")
             _db = _client[db_name]
-            _active_uri = local_uri
-            print(f"[MongoDB Local Fallback] Connected to local MongoDB '{db_name}'. App remains operational while Atlas IP is whitelisted.")
-            init_indexes(_db)
             return _db
-    except Exception as le:
-        print(f"[MongoDB Local Notice] Local fallback unavailable: {le}")
-
-    # 3. If local fallback also not available, keep the Atlas client object so reconnect attempts can proceed
-    if '_client' not in globals() or _client is None:
-        _client = create_client(primary_uri)
-        _db = _client[db_name]
-        _active_uri = primary_uri
-
-    return _db
+    except Exception as e:
+        print(f"[MongoDB Atlas Critical] Failed to connect to database: {e}")
+        raise e
 
 def close_db():
     """Closes the MongoDB client connection cleanly during shutdown."""
-    global _client, _db, _active_uri
+    global _client, _db
     if _client is not None:
         try:
             _client.close()
-            print("[MongoDB] Database connection closed successfully.")
+            print("[MongoDB Atlas] Database connection closed successfully.")
         except Exception as e:
-            print(f"[MongoDB] Error closing database connection: {e}")
+            print(f"[MongoDB Atlas] Error closing connection: {e}")
         finally:
             _client = None
             _db = None
-            _active_uri = None
 
 def init_indexes(db):
     """Ensures unique and query-optimizing indexes exist on all collections."""
@@ -185,9 +158,9 @@ def init_indexes(db):
         db.health_screenings.create_index([("status", ASCENDING)])
         db.health_screenings.create_index([("createdAt", DESCENDING)])
         
-        print("[MongoDB] Indexes initialized successfully.")
+        print("[MongoDB Atlas] Indexes initialized successfully.")
     except Exception as e:
-        print(f"[MongoDB] Note on indexes: {e}")
+        print(f"[MongoDB Atlas] Note on indexes: {e}")
 
 def serialize_doc(doc):
     """Recursively converts MongoDB ObjectId and datetime to JSON serializable formats."""

@@ -1,36 +1,55 @@
+import re
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 class UserRegisterSchema(BaseModel):
     name: str = Field(..., min_length=2, description="Full name")
-    email: EmailStr = Field(..., description="Valid email address")
+    email: str = Field(..., description="Valid email address")
     phone: str = Field(..., min_length=7, description="Contact phone number")
     password: str = Field(..., min_length=6, description="Password (at least 6 characters)")
+    confirmPassword: Optional[str] = None
     role: str = Field(default="DONOR", description="Role: DONOR, REQUESTER, ADMIN, HOSPITAL")
     bloodGroup: Optional[str] = Field(default=None, description="Blood group (e.g. A+, O-, etc.)")
-    dateOfBirth: Optional[str] = None
+    dateOfBirth: Optional[str] = ""
     gender: Optional[str] = "Not Specified"
-    city: Optional[str] = None
-    state: Optional[str] = None
-    address: Optional[str] = None
-    emergencyContact: Optional[str] = None
-    hospitalName: Optional[str] = None
-    representativeName: Optional[str] = None
-    registrationNumber: Optional[str] = None
-    pinCode: Optional[str] = None
+    city: Optional[str] = ""
+    state: Optional[str] = ""
+    address: Optional[str] = ""
+    emergencyContact: Optional[str] = ""
+    hospitalName: Optional[str] = ""
+    representativeName: Optional[str] = ""
+    registrationNumber: Optional[str] = ""
+    pinCode: Optional[str] = ""
+
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        clean = (v or "").strip().lower()
+        if not re.match(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$', clean):
+            raise ValueError("A valid email address is required.")
+        return clean
 
     @field_validator('role')
     @classmethod
     def validate_role(cls, v: str) -> str:
-        role = v.strip().upper()
+        role = (v or "DONOR").strip().upper()
         allowed = ['DONOR', 'REQUESTER', 'ADMIN', 'HOSPITAL']
         if role not in allowed:
             raise ValueError(f"Role must be one of: {', '.join(allowed)}")
         return role
 
 class UserLoginSchema(BaseModel):
-    email: EmailStr
+    email: str
     password: str
+
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        return (v or "").strip().lower()
 
 class BloodRequestCreateSchema(BaseModel):
     patientName: str = Field(..., min_length=2)

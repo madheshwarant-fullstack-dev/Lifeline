@@ -14,9 +14,9 @@ class Config:
     PORT = int(os.getenv("PORT", 5000))
     DEBUG = os.getenv("FLASK_DEBUG", "True").lower() in ("true", "1", "t")
     
-    # MongoDB
-    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/lifeline")
-    DB_NAME = os.getenv("DB_NAME", "lifeline")
+    # MongoDB Atlas
+    MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URI") or "mongodb+srv://lifeline_admin:Lifeline-123@lifeline.hpq3jzn.mongodb.net/lifeline?retryWrites=true&w=majority"
+    DB_NAME = os.getenv("DB_NAME") or os.getenv("DATABASE_NAME") or "lifeline"
     
     # JWT
     JWT_SECRET = os.getenv("JWT_SECRET", "lifeline secret")

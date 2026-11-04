@@ -824,7 +824,11 @@ def api_confirm_screening(
 # Execution entry point
 if __name__ == "__main__":
     import uvicorn
+    import sys
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
     port = int(os.getenv("PORT", 5000))
     print(f"[Lifeline] FastAPI server starting on http://localhost:{port} (Swagger UI: http://localhost:{port}/docs)")
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=Config.DEBUG)
+    uvicorn.run(app, host="0.0.0.0", port=port)
 

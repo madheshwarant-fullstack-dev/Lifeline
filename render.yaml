@@ -16,3 +16,4 @@ services:
         value: "86400"
       - key: FRONTEND_URL
         sync: false
+
