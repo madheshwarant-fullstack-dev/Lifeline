@@ -27,9 +27,9 @@ def get_safe_uri(uri: str) -> str:
 def create_client(uri: str):
     """Creates a PyMongo MongoClient instance with robust Atlas timeouts and TLS settings."""
     options = {
-        "serverSelectionTimeoutMS": 8000,
-        "connectTimeoutMS": 8000,
-        "socketTimeoutMS": 15000,
+        "serverSelectionTimeoutMS": 20000,
+        "connectTimeoutMS": 20000,
+        "socketTimeoutMS": 30000,
         "retryWrites": True,
         "appName": "LifelineBackend"
     }
@@ -42,6 +42,8 @@ def ping_db(client=None) -> tuple[bool, str]:
     """Tests the database connection using admin ping command."""
     try:
         c = client or _client
+        if c is None:
+            c = get_client()
         if c is None:
             return False, "Client is not initialized."
         c.admin.command('ping')

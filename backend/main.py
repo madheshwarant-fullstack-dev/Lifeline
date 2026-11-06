@@ -328,7 +328,7 @@ def api_donor_dashboard(current_user: dict = Depends(require_role("DONOR"))):
     donor = get_donor_by_user_id(current_user["id"])
     if not donor:
         return json_error("Donor record not found for authenticated user.", 404)
-    stats = get_donor_dashboard_stats(donor["id"])
+    stats = get_donor_dashboard_stats(current_user["id"])
     return json_success(stats, "Donor dashboard data retrieved.")
 
 @app.get("/api/donors/{donor_id}", tags=["Donors"])
@@ -385,10 +385,10 @@ def api_contact_donor(
     payload: DonorContactSchema,
     current_user: dict = Depends(get_current_user)
 ):
-    success, msg = contact_donor(donor_id, current_user, payload.message, payload.requestId)
-    if not success:
-        return json_error(msg, 400)
-    return json_success(None, msg)
+    result, err = contact_donor(current_user, donor_id, payload.model_dump())
+    if err:
+        return json_error(err, 400)
+    return json_success(result, result.get("message", "Contact request sent to donor."))
 
 # ==========================================
 # 4. BLOOD REQUEST ROUTES (/api/requests)
@@ -824,7 +824,7 @@ if __name__ == "__main__":
     backend_dir = os.path.dirname(os.path.abspath(__file__))
     if backend_dir not in sys.path:
         sys.path.insert(0, backend_dir)
-    port = int(os.getenv("PORT", 5000))
+    port = Config.PORT
     print(f"[Lifeline] FastAPI server starting on http://localhost:{port} (Swagger UI: http://localhost:{port}/docs)")
     uvicorn.run(app, host="0.0.0.0", port=port)
 

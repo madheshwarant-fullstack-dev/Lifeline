@@ -72,8 +72,16 @@ class DonorAvailabilitySchema(BaseModel):
     availability: bool
 
 class DonorContactSchema(BaseModel):
-    message: str = Field(..., min_length=1)
+    message: Optional[str] = "Emergency blood donation contact request"
+    patientName: Optional[str] = "Patient"
+    hospitalName: Optional[str] = "Hospital"
+    bloodGroup: Optional[str] = None
+    city: Optional[str] = None
+    urgency: Optional[str] = "NORMAL"
+    contactPhone: Optional[str] = None
     requestId: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore")
 
 class DonorProfileUpdateSchema(BaseModel):
     name: Optional[str] = None
@@ -104,8 +112,12 @@ class HealthScreeningSubmitSchema(BaseModel):
     isEligibleSelfDeclared: Optional[bool] = True
 
 class HealthScreeningReviewSchema(BaseModel):
-    decision: str  # APPROVED / REJECTED
+    decision: str  # APPROVED / DEFERRED / REJECTED
     comments: Optional[str] = None
+    notes: Optional[str] = None
+    hospitalInstructions: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore")
 
 class UserStatusUpdateSchema(BaseModel):
     status: str  # ACTIVE / BLOCKED

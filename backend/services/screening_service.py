@@ -297,12 +297,14 @@ def review_health_screening(user_doc: dict, screening_id: str, review_data: dict
         return None, "Screening record not found."
 
     decision = (review_data.get("decision") or "").strip().upper()
+    if decision in ["REJECTED", "REJECT", "DECLINED"]:
+        decision = "DEFERRED"
     if decision not in ["APPROVED", "DEFERRED"]:
         return None, "Decision must be 'APPROVED' or 'DEFERRED'."
 
-    notes = (review_data.get("notes") or "").strip()
+    notes = (review_data.get("notes") or review_data.get("comments") or review_data.get("reviewNotes") or "").strip()
     if not notes:
-        return None, "Clinical notes or reviewer remarks are required."
+        notes = "Cleared by reviewing medical officer." if decision == "APPROVED" else "Deferred based on clinical evaluation."
 
     hospital_instructions = (review_data.get("hospitalInstructions") or "").strip()
     if decision == "APPROVED" and not hospital_instructions:

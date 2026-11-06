@@ -64,7 +64,7 @@ const Register = () => {
       else navigate('/requester/dashboard');
     } catch (err) {
       if (!err.response) {
-        setError('Cannot reach the backend server. Please make sure the backend is running on http://localhost:5000.');
+        setError('Cannot reach the backend server. Please make sure the Lifeline backend is running and reachable.');
       } else {
         const msg = err.response?.data?.message || err.response?.data?.errors?.join(', ') || 'Registration failed. Please check form inputs.';
         setError(msg);

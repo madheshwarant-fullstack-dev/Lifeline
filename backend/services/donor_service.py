@@ -153,6 +153,11 @@ def get_donor_dashboard_stats(user_id: str):
     db = get_db()
     donor = db.donors.find_one({"userId": str(user_id)})
     if not donor:
+        try:
+            donor = db.donors.find_one({"_id": ObjectId(user_id)})
+        except Exception:
+            pass
+    if not donor:
         return None
     
     # Calculate eligibility (>= 90 days since last donation)

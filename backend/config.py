@@ -11,7 +11,7 @@ else:
     load_dotenv()
 
 class Config:
-    PORT = int(os.getenv("PORT", 5000))
+    PORT = int(os.getenv("PORT", 8000))
     DEBUG = os.getenv("FLASK_DEBUG", "True").lower() in ("true", "1", "t")
     
     # MongoDB Atlas

@@ -26,7 +26,7 @@ const AdminLogin = () => {
       navigate('/admin');
     } catch (err) {
       if (!err.response) {
-        setError('Cannot reach the backend server. Please make sure the backend is running on http://localhost:5000.');
+        setError('Cannot reach the backend server. Please make sure the Lifeline backend is running and reachable.');
       } else {
         setError(err.response?.data?.message || 'Invalid administrator credentials.');
       }
