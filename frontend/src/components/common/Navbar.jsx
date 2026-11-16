@@ -112,11 +112,6 @@ const Navbar = () => {
                 </NavLink>
               </li>
               <li className="nav-item">
-                <NavLink to="/how-it-works" className="nav-link px-2 fw-medium" onClick={closeMenus}>
-                  How It Works
-                </NavLink>
-              </li>
-              <li className="nav-item">
                 <NavLink to="/hospital-info" className="nav-link px-2 fw-medium" onClick={closeMenus}>
                   Hospital Info
                 </NavLink>
@@ -195,7 +190,7 @@ const Navbar = () => {
                             notifications.slice(0, 10).map((n) => (
                               <div
                                 key={n.id}
-                                className={`p-2.5 px-3 border-bottom text-start small transition-all ${n.isRead ? 'bg-white' : 'bg-light'}`}
+                                className={`notification-dropdown-item p-2.5 px-3 border-bottom text-start small transition-all ${n.isRead ? 'bg-white' : 'bg-light'}`}
                                 style={{ cursor: 'pointer' }}
                                 onClick={() => handleNotificationClick(n)}
                               >

@@ -1,12 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { adminService } from '../../services/adminService';
 import { requestService } from '../../services/requestService';
+import { useWebSocket } from '../../context/WebSocketContext';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
 import { BLOOD_GROUPS, INDIAN_STATES, URGENCIES, REQUEST_STATUSES } from '../../utils/constants';
 import StatusBadge from '../../components/common/StatusBadge';
 import UrgencyBadge from '../../components/common/UrgencyBadge';
 import { FaTrash, FaEye, FaCheckCircle, FaExclamationCircle } from 'react-icons/fa';
 
 const BloodRequestsManagement = () => {
+  const { subscribe } = useWebSocket();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterBg, setFilterBg] = useState('');
@@ -15,8 +19,10 @@ const BloodRequestsManagement = () => {
   const [filterStatus, setFilterStatus] = useState('');
   const [feedback, setFeedback] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [deleteTargetId, setDeleteTargetId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
-  const fetchRequests = async () => {
+  const fetchRequests = useCallback(async () => {
     setLoading(true);
     try {
       const params = {};
@@ -25,41 +31,60 @@ const BloodRequestsManagement = () => {
       if (filterUrgency) params.urgency = filterUrgency;
       if (filterStatus) params.status = filterStatus;
 
-      const res = await requestService.getRequests(params);
-      if (res && res.data) {
-        setRequests(res.data);
-      }
+      const res = await adminService.getAdminRequests(params);
+      const list = res?.data?.requests || res?.data || [];
+      setRequests(list);
     } catch (e) {
       console.error('Failed to load blood requests:', e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterBg, filterState, filterUrgency, filterStatus]);
 
   useEffect(() => {
     fetchRequests();
-  }, [filterBg, filterState, filterUrgency, filterStatus]);
+  }, [fetchRequests]);
+
+  useEffect(() => {
+    const u1 = subscribe('request_created', fetchRequests);
+    const u2 = subscribe('donor_responded', fetchRequests);
+    const u3 = subscribe('request_status_updated', fetchRequests);
+    return () => {
+      u1();
+      u2();
+      u3();
+    };
+  }, [subscribe, fetchRequests]);
 
   const handleStatusChange = async (requestId, newStatus) => {
     try {
       setFeedback('');
       setErrorMsg('');
-      await requestService.updateRequestStatus(requestId, newStatus);
+      await requestService.patchRequestStatus(requestId, newStatus);
       setFeedback(`Status updated to ${newStatus}.`);
       fetchRequests();
     } catch (err) {
-      setErrorMsg(err.response?.data?.message || 'Failed to update status.');
+      setErrorMsg(err.response?.data?.detail || err.response?.data?.message || 'Failed to update status.');
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Permanently delete this blood request?")) return;
+  const handleDelete = (id) => {
+    setDeleteTargetId(id);
+  };
+
+  const executeDelete = async () => {
+    if (!deleteTargetId) return;
+    setDeleting(true);
     try {
-      await requestService.deleteRequest(id);
-      setFeedback("Blood request removed.");
+      await requestService.deleteRequest(deleteTargetId);
+      setFeedback('Blood request removed.');
+      setDeleteTargetId(null);
       fetchRequests();
     } catch (e) {
-      setErrorMsg(e.response?.data?.message || "Failed to delete request.");
+      setErrorMsg(e.response?.data?.detail || e.response?.data?.message || 'Failed to delete request.');
+      setDeleteTargetId(null);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -309,6 +334,17 @@ const BloodRequestsManagement = () => {
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(deleteTargetId)}
+        variant="danger"
+        title="Permanently Delete Blood Request?"
+        message="Are you sure you want to remove this blood request record? Associated tracking invitations will also be cleared."
+        confirmLabel="Delete Request"
+        loading={deleting}
+        onConfirm={executeDelete}
+        onCancel={() => setDeleteTargetId(null)}
+      />
     </div>
   );
 };

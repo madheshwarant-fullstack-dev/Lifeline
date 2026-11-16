@@ -1,11 +1,12 @@
 import os
+import asyncio
 import traceback
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from bson import ObjectId
 
-from fastapi import FastAPI, Depends, HTTPException, status, Header, Request, Query, Path
+from fastapi import FastAPI, Depends, HTTPException, status, Header, Request, Query, Path, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -29,7 +30,13 @@ from models.schemas import (
     HealthScreeningReviewSchema,
     UserStatusUpdateSchema,
     DonorVerifySchema,
-    HospitalVerifySchema
+    HospitalVerifySchema,
+    DonorLocationUpdateSchema,
+    DonorLocationSharingSchema,
+    RequestInviteSchema,
+    RequestRespondSchema,
+    DonorMedicalProfileSchema,
+    DonorMedicalReviewUpdateSchema
 )
 
 # Business Services
@@ -42,16 +49,32 @@ from services.donor_service import (
     search_donors,
     get_donor_dashboard_stats,
     respond_to_request,
-    contact_donor
+    contact_donor,
+    sanitize_public_donor,
+    set_location_sharing,
+    update_donor_live_location,
+    get_donor_invitations,
+    save_donor_medical_profile,
+    get_donor_medical_profile,
+    get_donor_medical_review_for_requester,
+    update_donor_medical_review_by_admin
 )
 from services.request_service import (
     create_blood_request,
     get_blood_requests,
     get_request_by_id,
     update_request_status,
-    delete_request
+    delete_request,
+    invite_donors_to_request,
+    get_request_invitations
 )
-from services.matching_service import find_matched_donors_for_request
+from services.matching_service import (
+    find_matched_donors_for_request,
+    find_nearby_donors,
+    expire_stale_donor_locations,
+    BLOOD_COMPATIBILITY_CONFIG
+)
+from services.realtime_service import manager as ws_manager
 from services.donation_service import record_donation, get_donations, update_donation_status
 from services.notification_service import (
     get_user_notifications,
@@ -74,9 +97,11 @@ from services.email_service import send_donor_verified_email
 async def lifespan(app: FastAPI):
     print("=" * 60)
     print("[Lifeline FastAPI] Starting up Lifeline Backend...")
+    ws_manager.set_loop(asyncio.get_running_loop())
     safe_uri = get_safe_uri(Config.MONGO_URI)
     print(f"[Lifeline FastAPI] Connecting to MongoDB Database: '{Config.DB_NAME}' ({safe_uri})")
     
+    reaper_task = None
     try:
         db = get_db()
         is_ok, msg = ping_db()
@@ -84,18 +109,34 @@ async def lifespan(app: FastAPI):
             print("[Lifeline FastAPI] MongoDB Atlas connection verified with ping.")
             try:
                 seed_database()
+                expire_stale_donor_locations(db)
             except Exception as se:
                 print(f"[Lifeline FastAPI] Seed database notice: {se}")
         else:
             print(f"[Lifeline FastAPI Warning] MongoDB Ping notice: {msg}")
     except Exception as e:
         print(f"[Lifeline FastAPI Startup Warning] Database init exception: {e}")
+
+    async def _stale_location_reaper():
+        while True:
+            await asyncio.sleep(120)
+            try:
+                expire_stale_donor_locations()
+            except Exception:
+                pass
+
+    reaper_task = asyncio.create_task(_stale_location_reaper())
     print("=" * 60)
     
-    yield
-    
-    print("[Lifeline FastAPI] Shutting down application and closing MongoDB connection pool...")
-    close_db()
+    try:
+        yield
+    finally:
+        if reaper_task:
+            reaper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await reaper_task
+        print("[Lifeline FastAPI] Shutting down application and closing MongoDB connection pool...")
+        close_db()
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -127,20 +168,59 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Helpers for uniform JSON responses
-def json_success(data=None, message="Success", status_code=200):
-    payload = {"success": True, "message": message}
-    if data is not None:
-        payload["data"] = data
+# Standardized Status Code Mapping
+HTTP_STATUS_CODE_MAP = {
+    200: "OK",
+    201: "CREATED",
+    202: "ACCEPTED",
+    204: "NO_CONTENT",
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "RESOURCE_NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
+    409: "CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
+    415: "UNSUPPORTED_MEDIA_TYPE",
+    422: "UNPROCESSABLE_ENTITY",
+    429: "TOO_MANY_REQUESTS",
+    500: "INTERNAL_SERVER_ERROR",
+    501: "NOT_IMPLEMENTED",
+    502: "BAD_GATEWAY",
+    503: "SERVICE_UNAVAILABLE",
+    504: "GATEWAY_TIMEOUT",
+}
+
+# Helpers for uniform JSON responses per Section 4 architecture
+def json_success(data=None, message="Operation completed successfully", status_code=200):
+    payload = {
+        "success": True,
+        "message": message,
+        "data": data if data is not None else {}
+    }
     return JSONResponse(status_code=status_code, content=payload)
 
-def json_error(message="An error occurred", status_code=400, errors=None):
-    payload = {"success": False, "message": message}
+def json_error(message="An error occurred", status_code=400, error_code=None, errors=None):
+    code = error_code or HTTP_STATUS_CODE_MAP.get(status_code, "ERROR")
+    payload = {
+        "success": False,
+        "message": message,
+        "error": {
+            "code": code
+        }
+    }
     if errors is not None:
-        payload["errors"] = errors
+        payload["error"]["details"] = errors
+        payload["errors"] = errors  # Backward-compatibility alias
     return JSONResponse(status_code=status_code, content=payload)
 
-# Custom Validation Error Handler
+# Centralized Error-Handling Middlewares
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    code = HTTP_STATUS_CODE_MAP.get(exc.status_code, "ERROR")
+    detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    return json_error(message=detail, status_code=exc.status_code, error_code=code)
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     err_msgs = []
@@ -148,7 +228,22 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         loc = " -> ".join([str(x) for x in err.get("loc", [])])
         msg = err.get("msg", "Invalid value")
         err_msgs.append(f"{loc}: {msg}")
-    return json_error("Validation failed", status_code=400, errors=err_msgs)
+    return json_error(
+        message="Input validation failed for request payload.",
+        status_code=422,
+        error_code="UNPROCESSABLE_ENTITY",
+        errors=err_msgs
+    )
+
+@app.exception_handler(Exception)
+async def global_unhandled_exception_handler(request: Request, exc: Exception):
+    # Log securely without exposing stack trace or internal secrets to user
+    print(f"[SECURITY ALERT / ERROR] Unhandled Exception on {request.method} {request.url.path}: {exc}")
+    return json_error(
+        message="An unexpected server error occurred. Please contact system support.",
+        status_code=500,
+        error_code="INTERNAL_SERVER_ERROR"
+    )
 
 # Authentication & Dependency Injection
 async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
@@ -249,6 +344,67 @@ def public_stats():
     except Exception as e:
         return json_error(f"Failed to fetch live statistics: {str(e)}", 500)
 
+
+@app.get("/api/blood-compatibility", tags=["System Telemetry"])
+def api_blood_compatibility():
+    return json_success(BLOOD_COMPATIBILITY_CONFIG, "RBC serological compatibility configuration.")
+
+
+# ==========================================
+# 1B. REAL-TIME WEBSOCKET GATEWAY (/ws)
+# ==========================================
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(default=None)):
+    raw_token = token
+    if not raw_token:
+        auth_header = websocket.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            raw_token = auth_header.split(" ", 1)[1].strip()
+    if not raw_token:
+        await websocket.close(code=4001, reason="Authentication token missing.")
+        return
+
+    try:
+        payload = jwt.decode(raw_token, Config.JWT_SECRET, algorithms=["HS256"])
+        user_id = payload.get("sub") or payload.get("userId")
+        if not user_id or not ObjectId.is_valid(str(user_id)):
+            await websocket.close(code=4001, reason="Invalid token payload.")
+            return
+        db = get_db()
+        user = db.users.find_one({"_id": ObjectId(str(user_id))})
+        if not user or user.get("status") == "BLOCKED":
+            await websocket.close(code=4003, reason="User unauthorized or blocked.")
+            return
+        role = (user.get("role") or "").upper()
+        hospital_id = None
+        if role == "HOSPITAL":
+            hosp = db.hospitals.find_one({"userId": str(user_id)}, {"_id": 1})
+            if hosp:
+                hospital_id = str(hosp["_id"])
+    except Exception:
+        await websocket.close(code=4001, reason="Invalid or expired token.")
+        return
+
+    await ws_manager.connect(
+        websocket=websocket,
+        user_id=str(user_id),
+        role=role,
+        email=user.get("email", ""),
+        hospital_id=hospital_id,
+    )
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            if isinstance(msg, dict) and (msg.get("event") == "ping" or msg.get("type") == "ping"):
+                await websocket.send_json({
+                    "event": "pong",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
+
 # ==========================================
 # 2. AUTHENTICATION ROUTES (/api/auth)
 # ==========================================
@@ -331,12 +487,125 @@ def api_donor_dashboard(current_user: dict = Depends(require_role("DONOR"))):
     stats = get_donor_dashboard_stats(current_user["id"])
     return json_success(stats, "Donor dashboard data retrieved.")
 
+@app.get("/api/donors/nearby", tags=["Donors"])
+def api_nearby_donors(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lng: float = Query(..., ge=-180.0, le=180.0),
+    bloodGroup: Optional[str] = None,
+    radiusKm: int = Query(default=25, ge=1, le=500),
+    requestId: Optional[str] = None,
+    onlyVerified: bool = Query(default=True),
+    current_user: dict = Depends(require_role("HOSPITAL", "ADMIN", "REQUESTER")),
+):
+    if current_user["role"] == "HOSPITAL":
+        hosp = get_db().hospitals.find_one({"userId": str(current_user["id"])})
+        if hosp and not hosp.get("isVerified", False):
+            return json_error("Hospital verification is required to view nearby live donors.", 403)
+    res, err = find_nearby_donors(
+        hospital_lat=lat,
+        hospital_lng=lng,
+        patient_blood_group=bloodGroup,
+        radius_km=radiusKm,
+        only_verified=onlyVerified,
+        require_live_sharing=True,
+        request_id=requestId,
+    )
+    if err:
+        return json_error(err, 400)
+    return json_success(res, f"Found {res['totalMatches']} nearby matching donors within {radiusKm} km.")
+
+@app.get("/api/donors/invitations", tags=["Donors"])
+def api_donor_invitations(current_user: dict = Depends(require_role("DONOR"))):
+    res, err = get_donor_invitations(current_user["id"])
+    if err:
+        return json_error(err, 404)
+    return json_success(res, "Donor invitations retrieved.")
+
+@app.post("/api/donors/location-sharing", tags=["Donors"])
+def api_donor_location_sharing(
+    payload: DonorLocationSharingSchema,
+    current_user: dict = Depends(require_role("DONOR"))
+):
+    updated, err, code = set_location_sharing(
+        user_id=current_user["id"],
+        enabled=payload.enabled,
+        consent=payload.consent,
+        lat=payload.lat,
+        lng=payload.lng,
+    )
+    if err:
+        return json_error(err, code)
+    return json_success(
+        updated,
+        "Live GPS location sharing enabled." if payload.enabled else "Live GPS location sharing stopped and coordinates cleared."
+    )
+
+@app.post("/api/donors/location", tags=["Donors"])
+def api_update_donor_location(
+    payload: DonorLocationUpdateSchema,
+    current_user: dict = Depends(require_role("DONOR"))
+):
+    lat_val = payload.lat if payload.lat is not None else payload.latitude
+    lng_val = payload.lng if payload.lng is not None else payload.longitude
+    updated, err, code = update_donor_live_location(
+        user_id=current_user["id"],
+        lat=lat_val,
+        lng=lng_val,
+        accuracy=payload.accuracy,
+        consent=payload.consent,
+    )
+    if err:
+        return json_error(err, code)
+    return json_success(updated, "Live location updated successfully.")
+
+@app.get("/api/donors/medical-profile", tags=["Donors"])
+def api_get_donor_medical_profile(
+    current_user: dict = Depends(require_role("DONOR"))
+):
+    prof, err, code = get_donor_medical_profile(current_user["id"])
+    if err:
+        return json_error(err, code)
+    return json_success(prof, "Donor medical profile retrieved.")
+
+@app.post("/api/donors/medical-profile", tags=["Donors"])
+@app.put("/api/donors/medical-profile", tags=["Donors"])
+def api_save_donor_medical_profile(
+    payload: DonorMedicalProfileSchema,
+    current_user: dict = Depends(require_role("DONOR"))
+):
+    prof, err, code = save_donor_medical_profile(current_user["id"], payload.model_dump())
+    if err:
+        return json_error(err, code)
+    return json_success(prof, "Donor medical profile saved successfully.")
+
 @app.get("/api/donors/{donor_id}", tags=["Donors"])
-def api_get_donor(donor_id: str):
+def api_get_donor(donor_id: str, authorization: Optional[str] = Header(None)):
     donor = get_donor_by_id(donor_id)
     if not donor:
         return json_error("Donor not found.", 404)
+    is_owner_or_admin = False
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            token = authorization.split(" ")[1]
+            pay = jwt.decode(token, Config.JWT_SECRET, algorithms=["HS256"])
+            uid = str(pay.get("sub") or pay.get("userId") or "")
+            is_owner_or_admin = (pay.get("role") == "ADMIN" or uid == str(donor.get("userId")))
+        except Exception:
+            is_owner_or_admin = False
+    if not is_owner_or_admin:
+        donor = sanitize_public_donor(donor)
     return json_success(donor, "Donor profile retrieved.")
+
+@app.get("/api/donors/{donor_id}/medical-review", tags=["Donors"])
+def api_get_donor_medical_review(
+    donor_id: str,
+    requestId: Optional[str] = Query(default=None),
+    current_user: dict = Depends(get_current_user)
+):
+    review, err, code = get_donor_medical_review_for_requester(donor_id, current_user, request_id=requestId)
+    if err:
+        return json_error(err, code)
+    return json_success(review, "Donor medical review retrieved.")
 
 @app.put("/api/donors/{donor_id}", tags=["Donors"])
 def api_update_donor(
@@ -354,6 +623,7 @@ def api_update_donor(
     return json_success(updated, "Profile updated successfully.")
 
 @app.post("/api/donors/availability", tags=["Donors"])
+@app.patch("/api/donors/availability", tags=["Donors"])
 def api_set_availability(
     payload: DonorAvailabilitySchema,
     current_user: dict = Depends(require_role("DONOR"))
@@ -361,7 +631,7 @@ def api_set_availability(
     donor = get_donor_by_user_id(current_user["id"])
     if not donor:
         return json_error("Donor profile not found.", 404)
-    updated = toggle_availability(donor["id"], payload.availability)
+    updated = toggle_availability(current_user["id"], payload.availability)
     return json_success(updated, f"Availability set to {'Available' if payload.availability else 'Unavailable'}.")
 
 @app.post("/api/donors/requests/{request_id}/respond", tags=["Donors"])
@@ -431,6 +701,7 @@ def api_get_request(request_id: str):
     return json_success(req_doc, "Blood request retrieved.")
 
 @app.put("/api/requests/{request_id}/status", tags=["Blood Requests"])
+@app.patch("/api/requests/{request_id}/status", tags=["Blood Requests"])
 def api_update_request_status(
     request_id: str,
     payload: BloodRequestStatusUpdateSchema,
@@ -442,15 +713,151 @@ def api_update_request_status(
         return json_error(err, 400)
     return json_success(updated, f"Request status updated to {new_status}.")
 
+@app.post("/api/requests/{request_id}/invite", tags=["Blood Requests"])
+def api_invite_donors_for_request(
+    request_id: str,
+    payload: RequestInviteSchema = RequestInviteSchema(),
+    current_user: dict = Depends(require_role("HOSPITAL", "ADMIN", "REQUESTER"))
+):
+    res, err, code = invite_donors_to_request(
+        request_id=request_id,
+        actor_user=current_user,
+        donor_ids=payload.donorIds,
+        radius_km=payload.radiusKm or Config.DEFAULT_SEARCH_RADIUS_KM,
+        top_n=payload.topN or 10,
+    )
+    if err:
+        return json_error(err, code)
+    return json_success(res, f"Sent emergency blood donation invitations to {res['invitedCount']} compatible donor(s).")
+
+@app.get("/api/requests/{request_id}/invitations", tags=["Blood Requests"])
+def api_get_request_invitations(
+    request_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    req_doc = get_request_by_id(request_id)
+    if not req_doc:
+        return json_error("Blood request not found.", 404)
+    if current_user["role"] != "ADMIN" and str(req_doc.get("requesterId")) != str(current_user["id"]):
+        return json_error("Not authorized to view invitations for this request.", 403)
+    return json_success(get_request_invitations(request_id), "Request invitations retrieved.")
+
+@app.post("/api/requests/{request_id}/respond", tags=["Blood Requests"])
+def api_donor_respond_request_v2(
+    request_id: str,
+    payload: RequestRespondSchema,
+    current_user: dict = Depends(require_role("DONOR"))
+):
+    action = (payload.action or "").strip().upper()
+    if action not in ["ACCEPT", "ACCEPTED", "DECLINE", "DECLINED", "REJECT", "REJECTED"]:
+        return json_error("Action must be ACCEPT, DECLINE, or REJECT.", 400)
+    res, err = respond_to_request(current_user["id"], request_id, action, note=payload.note or "")
+    if err:
+        return json_error(err, 400)
+    return json_success(res, res.get("message", "Response processed."))
+
+# ==========================================
+# 4B. HOSPITAL REAL-TIME ROUTES (/api/hospitals)
+# ==========================================
+@app.post("/api/hospitals/requests", tags=["Hospital Portal"], status_code=201)
+def api_hospital_create_request(
+    payload: Dict[str, Any],
+    current_user: dict = Depends(require_role("HOSPITAL", "ADMIN", "REQUESTER"))
+):
+    created, err = create_blood_request(current_user, payload)
+    if err:
+        return json_error(err, 400)
+    return json_success(created, "Hospital blood request created and nearby donors queried.", 201)
+
+@app.get("/api/hospitals/requests", tags=["Hospital Portal"])
+def api_hospital_list_requests(
+    status: Optional[str] = None,
+    urgency: Optional[str] = None,
+    bloodGroup: Optional[str] = None,
+    current_user: dict = Depends(require_role("HOSPITAL", "ADMIN", "REQUESTER"))
+):
+    filters = {"status": status, "urgency": urgency, "bloodGroup": bloodGroup}
+    if current_user["role"] in ("HOSPITAL", "REQUESTER"):
+        filters["requesterId"] = current_user["id"]
+    reqs = get_blood_requests(filters)
+    db = get_db()
+    for r in reqs:
+        invs = get_request_invitations(r["id"])
+        r["invitations"] = invs
+        r["invitationSummary"] = {
+            "total": len(invs),
+            "pending": sum(1 for i in invs if i.get("status") == "PENDING"),
+            "accepted": sum(1 for i in invs if i.get("status") == "ACCEPTED"),
+            "rejected": sum(1 for i in invs if i.get("status") == "REJECTED"),
+        }
+    return json_success(reqs, f"Loaded {len(reqs)} hospital blood requests.")
+
+@app.get("/api/hospitals/requests/{request_id}/donors", tags=["Hospital Portal"])
+def api_hospital_request_nearby_donors(
+    request_id: str,
+    radius_km: Optional[int] = Query(default=None, ge=1, le=500),
+    radiusKm: Optional[int] = Query(default=None, ge=1, le=500),
+    lat: Optional[float] = Query(default=None, ge=-90.0, le=90.0),
+    lng: Optional[float] = Query(default=None, ge=-180.0, le=180.0),
+    current_user: dict = Depends(require_role("HOSPITAL", "ADMIN", "REQUESTER"))
+):
+    req_doc = get_request_by_id(request_id)
+    if not req_doc:
+        return json_error("Blood request not found.", 404)
+    if current_user["role"] != "ADMIN" and str(req_doc.get("requesterId")) != str(current_user["id"]):
+        return json_error("Not authorized to access nearby donor tracking for this request.", 403)
+    if current_user["role"] == "HOSPITAL":
+        hosp = get_db().hospitals.find_one({"userId": str(current_user["id"])})
+        if hosp and not hosp.get("isVerified", False):
+            return json_error("Verified hospital approval required to search nearby live donors.", 403)
+
+    target_lat = lat if lat is not None else (req_doc.get("lat") or req_doc.get("latitude"))
+    target_lng = lng if lng is not None else (req_doc.get("lng") or req_doc.get("longitude"))
+    effective_radius = radius_km or radiusKm or req_doc.get("searchRadiusKm") or Config.DEFAULT_SEARCH_RADIUS_KM
+
+    if target_lat is None or target_lng is None:
+        return json_success({
+            "request": req_doc,
+            "radiusKm": effective_radius,
+            "allowedRadiiKm": Config.ALLOWED_SEARCH_RADII_KM,
+            "suggestedExpandRadiusKm": None,
+            "compatibleBloodGroups": [],
+            "totalMatches": 0,
+            "donors": [],
+            "invitations": get_request_invitations(request_id),
+            "needsHospitalCoordinates": True,
+        }, "Hospital coordinates are missing on this request. Set hospital GPS to enable radius tracking.")
+
+    nearby_res, err = find_nearby_donors(
+        hospital_lat=target_lat,
+        hospital_lng=target_lng,
+        patient_blood_group=req_doc.get("bloodGroup"),
+        radius_km=effective_radius,
+        only_verified=True,
+        require_live_sharing=True,
+        request_city=req_doc.get("city"),
+        request_state=req_doc.get("state"),
+        request_id=request_id,
+    )
+    if err:
+        return json_error(err, 400)
+
+    return json_success({
+        "request": req_doc,
+        **nearby_res,
+        "invitations": get_request_invitations(request_id),
+        "needsHospitalCoordinates": False,
+    }, f"Found {nearby_res['totalMatches']} compatible live donors within {effective_radius} km.")
+
 @app.delete("/api/requests/{request_id}", tags=["Blood Requests"])
 def api_delete_request(
     request_id: str,
     current_user: dict = Depends(get_current_user)
 ):
-    success, err = delete_request(request_id, current_user)
+    success, err, code = delete_request(request_id, current_user)
     if not success:
-        return json_error(err, 400)
-    return json_success(None, "Blood request cancelled successfully.")
+        return json_error(err, code)
+    return json_success(None, "Blood request cancelled successfully.", 200)
 
 # ==========================================
 # 5. MATCHING ENGINE ROUTES (/api/matching)
@@ -659,6 +1066,8 @@ def api_admin_update_user_status(
     payload: UserStatusUpdateSchema,
     admin_user: dict = Depends(require_role("ADMIN"))
 ):
+    if not ObjectId.is_valid(user_id):
+        return json_error("Invalid user ID format.", 400)
     db = get_db()
     new_status = payload.status.strip().upper()
     if new_status not in ["ACTIVE", "BLOCKED"]:
@@ -683,16 +1092,31 @@ def api_admin_verify_donor(
     if status_val not in ["PENDING", "VERIFIED", "REJECTED"]:
         return json_error("Verification status must be PENDING, VERIFIED, or REJECTED.", 400)
 
-    donor = db.donors.find_one({"_id": ObjectId(donor_id)})
+    donor = None
+    if ObjectId.is_valid(donor_id):
+        donor = db.donors.find_one({"_id": ObjectId(donor_id)})
+    if not donor:
+        donor = db.donors.find_one({"userId": str(donor_id)})
     if not donor:
         return json_error("Donor not found.", 404)
 
     db.donors.update_one(
-        {"_id": ObjectId(donor_id)},
+        {"_id": donor["_id"]},
         {"$set": {"verificationStatus": status_val, "updatedAt": datetime.now(timezone.utc)}}
     )
     send_donor_verified_email(donor.get("name", "Donor"), donor.get("email"), status_val)
     return json_success(None, f"Donor status updated to {status_val}.")
+
+@app.put("/api/admin/donors/{donor_id}/medical-review", tags=["Admin Cockpit"])
+def api_admin_update_donor_medical_review(
+    donor_id: str,
+    payload: DonorMedicalReviewUpdateSchema,
+    admin_user: dict = Depends(require_role("ADMIN"))
+):
+    res, err, code = update_donor_medical_review_by_admin(admin_user, donor_id, payload.model_dump())
+    if err:
+        return json_error(err, code)
+    return json_success(res, res.get("message", "Medical review status updated successfully."))
 
 @app.put("/api/admin/hospitals/{hospital_id}/verify", tags=["Admin Cockpit"])
 def api_admin_verify_hospital(
@@ -702,11 +1126,10 @@ def api_admin_verify_hospital(
 ):
     db = get_db()
     is_verified = payload.isVerified
-    query = {}
     if ObjectId.is_valid(hospital_id):
-        query["_id"] = ObjectId(hospital_id)
+        query = {"$or": [{"_id": ObjectId(hospital_id)}, {"userId": str(hospital_id)}]}
     else:
-        query["userId"] = str(hospital_id)
+        query = {"userId": str(hospital_id)}
 
     res = db.hospitals.update_one(
         query,
@@ -726,19 +1149,21 @@ def api_admin_delete_user(
     if str(admin_user["id"]) == str(user_id):
         return json_error("You cannot delete your own administrative account.", 400)
 
+    if not ObjectId.is_valid(user_id):
+        return json_error("Invalid user ID format.", 400)
     db.donors.delete_many({"userId": str(user_id)})
     db.hospitals.delete_many({"userId": str(user_id)})
     res = db.users.delete_one({"_id": ObjectId(user_id)})
     if res.deleted_count == 0:
         return json_error("User not found.", 404)
-    return json_success(None, "User and associated records deleted permanently.")
+    return json_success(None, "User and associated records deleted permanently.", 200)
 
 @app.get("/api/admin/reports", tags=["Admin Cockpit"])
 def api_admin_reports(admin_user: dict = Depends(require_role("ADMIN"))):
     db = get_db()
     total_donations = db.donations.count_documents({"status": "COMPLETED"})
     total_requests = db.blood_requests.count_documents({})
-    fulfilled_requests = db.blood_requests.count_documents({"status": {"$in": ["DONATION_COMPLETED", "CLOSED"]}})
+    fulfilled_requests = db.blood_requests.count_documents({"status": {"$in": ["DONATION_COMPLETED", "FULFILLED", "CLOSED"]}})
     fulfillment_rate = (fulfilled_requests / total_requests * 100) if total_requests > 0 else 0
 
     return json_success({
@@ -748,6 +1173,102 @@ def api_admin_reports(admin_user: dict = Depends(require_role("ADMIN"))):
         "fulfillmentRate": round(fulfillment_rate, 1),
         "generatedAt": datetime.now(timezone.utc).isoformat()
     }, "Reports generated.")
+
+@app.get("/api/admin/donors", tags=["Admin Cockpit"])
+def api_admin_donors(
+    bloodGroup: Optional[str] = None,
+    verificationStatus: Optional[str] = None,
+    availability: Optional[str] = None,
+    locationSharingEnabled: Optional[str] = None,
+    search: Optional[str] = None,
+    admin_user: dict = Depends(require_role("ADMIN")),
+):
+    db = get_db()
+    expire_stale_donor_locations(db)
+    query = {}
+    if bloodGroup and bloodGroup.strip():
+        query["bloodGroup"] = bloodGroup.strip().upper()
+    if verificationStatus and verificationStatus.strip():
+        query["verificationStatus"] = verificationStatus.strip().upper()
+    if availability is not None and availability != "":
+        query["availability"] = str(availability).lower() in ("true", "1", "yes")
+    if locationSharingEnabled is not None and locationSharingEnabled != "":
+        query["locationSharingEnabled"] = str(locationSharingEnabled).lower() in ("true", "1", "yes")
+    if search and search.strip():
+        rgx = {"$regex": search.strip(), "$options": "i"}
+        query["$or"] = [{"name": rgx}, {"email": rgx}, {"city": rgx}, {"state": rgx}, {"phone": rgx}]
+
+    donors = serialize_doc(list(db.donors.find(query).sort("createdAt", -1).limit(200)))
+    return json_success(donors, f"Loaded {len(donors)} donors.")
+
+@app.get("/api/admin/hospitals", tags=["Admin Cockpit"])
+def api_admin_hospitals(
+    isVerified: Optional[str] = None,
+    search: Optional[str] = None,
+    admin_user: dict = Depends(require_role("ADMIN")),
+):
+    db = get_db()
+    query = {}
+    if isVerified is not None and isVerified != "":
+        query["isVerified"] = str(isVerified).lower() in ("true", "1", "yes")
+    if search and search.strip():
+        rgx = {"$regex": search.strip(), "$options": "i"}
+        query["$or"] = [{"hospitalName": rgx}, {"email": rgx}, {"city": rgx}, {"state": rgx}, {"registrationNumber": rgx}]
+
+    hospitals = serialize_doc(list(db.hospitals.find(query).sort("createdAt", -1).limit(200)))
+    user_oids = [
+        ObjectId(str(h["userId"]))
+        for h in hospitals
+        if h.get("userId") and ObjectId.is_valid(str(h["userId"]))
+    ]
+    user_map = {}
+    if user_oids:
+        for u in db.users.find({"_id": {"$in": user_oids}}, {"status": 1, "name": 1}):
+            user_map[str(u["_id"])] = u
+    for h in hospitals:
+        u = user_map.get(str(h.get("userId")))
+        if u:
+            h["accountStatus"] = u.get("status", "ACTIVE")
+            h["userName"] = u.get("name", h.get("hospitalName"))
+    return json_success(hospitals, f"Loaded {len(hospitals)} hospitals.")
+
+@app.get("/api/admin/requests", tags=["Admin Cockpit"])
+def api_admin_requests(
+    bloodGroup: Optional[str] = None,
+    urgency: Optional[str] = None,
+    status: Optional[str] = None,
+    city: Optional[str] = None,
+    admin_user: dict = Depends(require_role("ADMIN")),
+):
+    db = get_db()
+    reqs = get_blood_requests({
+        "bloodGroup": bloodGroup,
+        "urgency": urgency,
+        "status": status,
+        "city": city,
+    })
+    req_ids = [r["id"] for r in reqs if r.get("id")]
+    summary_by_req = {rid: {"total": 0, "pending": 0, "accepted": 0, "rejected": 0} for rid in req_ids}
+    if req_ids:
+        for inv in db.request_invitations.find(
+            {"requestId": {"$in": req_ids}},
+            {"requestId": 1, "status": 1},
+        ):
+            rid = inv.get("requestId")
+            if rid in summary_by_req:
+                summary_by_req[rid]["total"] += 1
+                st = (inv.get("status") or "").upper()
+                if st in ("PENDING", "INVITED"):
+                    summary_by_req[rid]["pending"] += 1
+                elif st == "ACCEPTED":
+                    summary_by_req[rid]["accepted"] += 1
+                elif st in ("REJECTED", "DECLINED"):
+                    summary_by_req[rid]["rejected"] += 1
+    for r in reqs:
+        r["invitationSummary"] = summary_by_req.get(
+            r.get("id"), {"total": 0, "pending": 0, "accepted": 0, "rejected": 0}
+        )
+    return json_success(reqs, f"Loaded {len(reqs)} blood requests.")
 
 # ==========================================
 # 9. HEALTH SCREENING ROUTES (/api/screenings)

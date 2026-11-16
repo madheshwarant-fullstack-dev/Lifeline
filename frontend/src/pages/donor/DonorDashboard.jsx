@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import StatusBadge from '../../components/common/StatusBadge';
 import UrgencyBadge from '../../components/common/UrgencyBadge';
 import DisclaimerAlert from '../../components/common/DisclaimerAlert';
+import DonorLiveTrackingCard from '../../components/donor/DonorLiveTrackingCard';
 import { 
   FaTint, 
   FaHeartbeat, 
@@ -21,7 +22,10 @@ import {
   FaHistory,
   FaShieldAlt,
   FaHospital,
-  FaCalendarAlt
+  FaCalendarAlt,
+  FaNotesMedical,
+  FaStethoscope,
+  FaFileContract
 } from 'react-icons/fa';
 
 const DonorDashboard = () => {
@@ -314,6 +318,77 @@ const DonorDashboard = () => {
         </div>
       </div>
 
+      {/* 2b. DONOR MEDICAL REVIEW & HEALTH PROFILE SECTION */}
+      <div className="bc-card p-4 bg-white mb-4 shadow-sm border">
+        <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2 mb-3 pb-2 border-bottom">
+          <div>
+            <h5 className="fw-bold text-dark mb-0 d-flex align-items-center gap-2">
+              <FaNotesMedical className="text-danger" /> Medical Review &amp; Health Clearance Profile
+            </h5>
+            <small className="text-muted">Clinical eligibility status and pre-screening overview</small>
+          </div>
+          <Link to="/donor/profile" className="btn btn-sm btn-outline-danger rounded-pill fw-semibold d-inline-flex align-items-center gap-1">
+            <FaStethoscope size={11} /> View / Update Medical Profile
+          </Link>
+        </div>
+
+        <div className="row g-3">
+          <div className="col-sm-6 col-lg-3">
+            <div className="p-3 bg-light rounded-3 h-100 border text-center">
+              <span className="text-muted text-uppercase fw-bold d-block" style={{ fontSize: '10px' }}>Clinical Status</span>
+              <span className={`badge rounded-pill px-3 py-1.5 mt-2 ${
+                donor.medicalReviewStatus === 'VERIFIED' ? 'bg-success text-white' :
+                donor.medicalReviewStatus === 'REQUIRES_ASSESSMENT' ? 'bg-warning text-dark' :
+                donor.medicalReviewStatus === 'NOT_CLEARED' ? 'bg-danger text-white' :
+                'bg-secondary text-white'
+              }`} style={{ fontSize: '11px' }}>
+                <FaStethoscope className="me-1" />
+                {donor.medicalReviewStatus === 'VERIFIED' ? 'Verified' :
+                 donor.medicalReviewStatus === 'REQUIRES_ASSESSMENT' ? 'Requires Assessment' :
+                 donor.medicalReviewStatus === 'NOT_CLEARED' ? 'Not Cleared' : 'Pending Verification'}
+              </span>
+            </div>
+          </div>
+
+          <div className="col-sm-6 col-lg-3">
+            <div className="p-3 bg-light rounded-3 h-100 border text-center">
+              <span className="text-muted text-uppercase fw-bold d-block" style={{ fontSize: '10px' }}>Health Declaration</span>
+              <strong className="text-dark d-block mt-2">
+                {donor.healthDeclaration ? (
+                  <span className="text-success d-inline-flex align-items-center gap-1">
+                    <FaCheckCircle size={12} /> Declared &amp; Signed
+                  </span>
+                ) : (
+                  <span className="text-warning d-inline-flex align-items-center gap-1">
+                    <FaTimesCircle size={12} /> Pending Declaration
+                  </span>
+                )}
+              </strong>
+            </div>
+          </div>
+
+          <div className="col-sm-6 col-lg-3">
+            <div className="p-3 bg-light rounded-3 h-100 border text-center">
+              <span className="text-muted text-uppercase fw-bold d-block" style={{ fontSize: '10px' }}>Recorded Weight</span>
+              <h4 className="fw-bold text-dark mb-0 mt-1">
+                {donor.weight ? `${donor.weight} kg` : 'Not recorded'}
+              </h4>
+              <small className="text-muted" style={{ fontSize: '10px' }}>Min 45 kg required</small>
+            </div>
+          </div>
+
+          <div className="col-sm-6 col-lg-3">
+            <div className="p-3 bg-light rounded-3 h-100 border text-center">
+              <span className="text-muted text-uppercase fw-bold d-block" style={{ fontSize: '10px' }}>Donation Cooldown</span>
+              <h5 className={`fw-bold mb-0 mt-1 ${isEligible ? 'text-success' : 'text-danger'}`}>
+                {isEligible ? 'Cleared for Donation' : `${daysUntilEligible} Days Remaining`}
+              </h5>
+              <small className="text-muted" style={{ fontSize: '10px' }}>90 days whole blood interval</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* 3. ACTIVE ACCEPTED REQUESTS & HEALTH SCREENING SECTION */}
       {activeAcceptedRequests.length > 0 && (
         <div className="bc-card p-4 bg-white mb-4 shadow-sm border border-danger-subtle">
@@ -513,6 +588,8 @@ const DonorDashboard = () => {
           </div>
         )}
       </div>
+
+      <DonorLiveTrackingCard donor={donor} onStatusChange={fetchDashboard} />
 
       {/* 4. RECENT DONATION HISTORY PREVIEW */}
       <div className="bc-card p-4 bg-white mb-4 shadow-sm border">

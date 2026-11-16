@@ -34,5 +34,25 @@ export const adminService = {
   async getReports() {
     const response = await api.get('/admin/reports');
     return response.data;
+  },
+
+  async getAdminDonors(params = {}) {
+    const response = await api.get('/admin/donors', { params });
+    return response.data;
+  },
+
+  async getAdminHospitals(params = {}) {
+    const response = await api.get('/admin/hospitals', { params });
+    return response.data;
+  },
+
+  async getAdminRequests(params = {}) {
+    const response = await api.get('/admin/requests', { params });
+    return response.data;
+  },
+
+  async updateDonorMedicalReview(donorId, data) {
+    const response = await api.put(`/admin/donors/${donorId}/medical-review`, data);
+    return response.data;
   }
 };

@@ -256,7 +256,7 @@ const RequesterDashboard = () => {
                     <td><StatusBadge status={r.status} /></td>
                     <td className="text-end">
                       <Link to={`/requests/${r.id || r._id}`} className="btn btn-sm btn-outline-danger rounded-pill fw-bold px-2.5 py-1">
-                        View Details & Donors <FaArrowRight size={10} className="ms-1" />
+                        Live Radar &amp; Donors <FaArrowRight size={10} className="ms-1" />
                       </Link>
                     </td>
                   </tr>

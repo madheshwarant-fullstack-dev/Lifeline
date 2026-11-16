@@ -12,9 +12,11 @@ import {
   BsPlusCircle, 
   BsListCheck, 
   BsPeople, 
+  BsGeoAlt,
   BsList, 
   BsXLg,
-  BsBoxArrowRight 
+  BsBoxArrowRight,
+  BsExclamationTriangleFill 
 } from 'react-icons/bs';
 
 const DashboardLayout = () => {
@@ -70,8 +72,11 @@ const DashboardLayout = () => {
                 <NavLink to="/donor/dashboard" className="sidebar-link" end onClick={() => setSidebarOpen(false)}>
                   <BsSpeedometer2 /> Dashboard
                 </NavLink>
+                <NavLink to="/donor/emergency-requests" className="sidebar-link text-danger fw-semibold" onClick={() => setSidebarOpen(false)}>
+                  <BsExclamationTriangleFill /> Emergency Alerts &amp; Invites
+                </NavLink>
                 <NavLink to="/donor/profile" className="sidebar-link" onClick={() => setSidebarOpen(false)}>
-                  <BsPersonGear /> My Profile & Location
+                  <BsPersonGear /> My Profile &amp; Location
                 </NavLink>
                 <NavLink to="/donor/available-requests" className="sidebar-link" onClick={() => setSidebarOpen(false)}>
                   <BsHeartFill /> Available Requests
@@ -95,6 +100,11 @@ const DashboardLayout = () => {
                 <NavLink to="/requester/dashboard" className="sidebar-link" end onClick={() => setSidebarOpen(false)}>
                   <BsSpeedometer2 /> Dashboard
                 </NavLink>
+                {user?.role === 'HOSPITAL' && (
+                  <NavLink to="/hospital/dashboard" className="sidebar-link fw-semibold text-danger" onClick={() => setSidebarOpen(false)}>
+                    <BsGeoAlt /> Live Donor Map &amp; Radar
+                  </NavLink>
+                )}
                 <NavLink to="/requester/create-request" className="sidebar-link text-danger fw-semibold" onClick={() => setSidebarOpen(false)}>
                   <BsPlusCircle /> {user?.role === 'HOSPITAL' ? 'Create Official Request' : 'Request Blood'}
                 </NavLink>

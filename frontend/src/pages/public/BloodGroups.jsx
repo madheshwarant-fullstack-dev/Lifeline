@@ -78,7 +78,7 @@ const BloodGroups = () => {
                     </div>
                   </div>
                   <Link to={`/requester/create-request?bloodGroup=${selectedGroup}`} className="btn btn-sm btn-blood d-flex align-items-center gap-1">
-                    Request {selectedGroup} <FaArrowRight size={10} />
+                    Request {selectedGroup} <BsArrowRight size={10} />
                   </Link>
                 </div>
 

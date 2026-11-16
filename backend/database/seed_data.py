@@ -190,6 +190,17 @@ def seed_database():
     # Check if admin already exists
     admin_exists = db.users.find_one({"email": "admin@bloodconnect.org"})
     if admin_exists:
+        # Backfill GeoJSON coordinates on demo Apollo hospital if absent (non-destructive)
+        db.hospitals.update_one(
+            {"email": "apollo@bloodconnect.org", "lat": {"$exists": False}},
+            {
+                "$set": {
+                    "lat": 13.0633,
+                    "lng": 80.2519,
+                    "location": {"type": "Point", "coordinates": [80.2519, 13.0633]},
+                }
+            },
+        )
         # Database already initialized and seeded
         return
 

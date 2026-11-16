@@ -24,6 +24,13 @@ class Config:
     
     # CORS
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+    # Real-Time Location & Matching Controls
+    LOCATION_STALE_MINUTES = int(os.getenv("LOCATION_STALE_MINUTES", 30))
+    LOCATION_RATE_LIMIT_WINDOW_SEC = int(os.getenv("LOCATION_RATE_LIMIT_WINDOW_SEC", 10))
+    LOCATION_RATE_LIMIT_MAX_UPDATES = int(os.getenv("LOCATION_RATE_LIMIT_MAX_UPDATES", 5))
+    ALLOWED_SEARCH_RADII_KM = [5, 10, 25, 50, 100]
+    DEFAULT_SEARCH_RADIUS_KM = int(os.getenv("DEFAULT_SEARCH_RADIUS_KM", 25))
     
     # Email SMTP Settings
     MAIL_SERVER = os.getenv("MAIL_SERVER", "smtp.gmail.com")

@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 from bson import ObjectId
 from database.connection import get_db, serialize_doc
+from services.realtime_service import emit_realtime_event
 
 def create_notification(recipient_id, recipient_email, title, message, notif_type="SYSTEM", related_id=None):
-    """Creates a notification record in MongoDB"""
+    """Creates a notification record in MongoDB and pushes live over WebSocket."""
     db = get_db()
     notif_doc = {
         "recipientId": str(recipient_id),
@@ -17,7 +18,12 @@ def create_notification(recipient_id, recipient_email, title, message, notif_typ
     }
     result = db.notifications.insert_one(notif_doc)
     notif_doc["_id"] = result.inserted_id
-    return serialize_doc(notif_doc)
+    serialized = serialize_doc(notif_doc)
+    try:
+        emit_realtime_event("notification", serialized, target_users=[str(recipient_id)])
+    except Exception:
+        pass
+    return serialized
 
 def get_user_notifications(recipient_id, limit=50):
     db = get_db()

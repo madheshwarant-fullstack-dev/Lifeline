@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { adminService } from '../../services/adminService';
+import { useWebSocket } from '../../context/WebSocketContext';
 import StatusBadge from '../../components/common/StatusBadge';
 import UrgencyBadge from '../../components/common/UrgencyBadge';
 import { 
@@ -17,24 +18,37 @@ import {
 } from 'react-icons/fa';
 
 const AdminDashboard = () => {
+  const { subscribe } = useWebSocket();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchAdminStats = async () => {
-      try {
-        const res = await adminService.getDashboardStats();
-        if (res && res.data) {
-          setData(res.data);
-        }
-      } catch (err) {
-        console.error('Failed to load admin dashboard:', err);
-      } finally {
-        setLoading(false);
+  const fetchAdminStats = useCallback(async () => {
+    try {
+      const res = await adminService.getDashboardStats();
+      if (res && res.data) {
+        setData(res.data);
       }
-    };
-    fetchAdminStats();
+    } catch (err) {
+      console.error('Failed to load admin dashboard:', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchAdminStats();
+    const unsubAll = subscribe('*', (payload) => {
+      if (
+        payload?.event &&
+        ['request_created', 'donor_responded', 'request_status_updated', 'donor_availability_updated'].includes(
+          payload.event
+        )
+      ) {
+        fetchAdminStats();
+      }
+    });
+    return unsubAll;
+  }, [fetchAdminStats, subscribe]);
 
   if (loading) {
     return (

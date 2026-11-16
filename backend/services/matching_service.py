@@ -1,37 +1,119 @@
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from bson import ObjectId
+from config import Config
 from database.connection import get_db, serialize_doc
-
-# Red Blood Cell compatibility map: Patient Blood Group -> List of Compatible Donor Blood Groups
-COMPATIBLE_DONORS_FOR_PATIENT = {
-    'O-': ['O-'],
-    'O+': ['O+', 'O-'],
-    'A-': ['A-', 'O-'],
-    'A+': ['A+', 'A-', 'O+', 'O-'],
-    'B-': ['B-', 'O-'],
-    'B+': ['B+', 'B-', 'O+', 'O-'],
-    'AB-': ['AB-', 'A-', 'B-', 'O-'],
-    'AB+': ['AB+', 'AB-', 'A+', 'A-', 'B+', 'B-', 'O+', 'O-']
-}
-
-# Red Blood Cell donation map: Donor Blood Group -> List of Compatible Recipients
-DONOR_CAN_DONATE_TO = {
-    'O-': ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'],
-    'O+': ['O+', 'A+', 'B+', 'AB+'],
-    'A-': ['A-', 'A+', 'AB-', 'AB+'],
-    'A+': ['A+', 'AB+'],
-    'B-': ['B-', 'B+', 'AB-', 'AB+'],
-    'B+': ['B+', 'AB+'],
-    'AB-': ['AB-', 'AB+'],
-    'AB+': ['AB+']
-}
+from services.blood_compatibility import (
+    COMPATIBLE_DONORS_FOR_PATIENT,
+    DONOR_CAN_DONATE_TO,
+    BLOOD_COMPATIBILITY_CONFIG,
+    get_compatible_donor_groups,
+    get_compatible_recipient_groups,
+    is_donor_compatible,
+    normalize_blood_group,
+)
 
 MATCHING_DISCLAIMER = (
     "NOTICE: Lifeline matching algorithms are an algorithmic decision-support tool. "
     "Final blood typing, serological crossmatching, infectious disease screening, and transfusion decisions "
     "must always be clinically validated by licensed medical doctors and certified blood banks."
 )
+
+
+def validate_gps_coordinates(lat, lng):
+    """Validates latitude (-90..90) and longitude (-180..180) as finite numbers."""
+    try:
+        if lat is None or lng is None:
+            return None, None, "Both latitude and longitude are required."
+        lat_f = float(lat)
+        lng_f = float(lng)
+        if not (math.isfinite(lat_f) and math.isfinite(lng_f)):
+            return None, None, "GPS coordinates must be finite numbers."
+        if lat_f < -90.0 or lat_f > 90.0:
+            return None, None, "Latitude must be between -90 and 90 degrees."
+        if lng_f < -180.0 or lng_f > 180.0:
+            return None, None, "Longitude must be between -180 and 180 degrees."
+        return lat_f, lng_f, None
+    except (TypeError, ValueError):
+        return None, None, "Invalid GPS coordinates format."
+
+
+def make_geojson_point(lat: float, lng: float):
+    """Creates a MongoDB GeoJSON Point object [longitude, latitude]."""
+    return {"type": "Point", "coordinates": [float(lng), float(lat)]}
+
+
+def get_approximate_coords(lat, lng, precision: int = 3):
+    """Rounds coordinates to ~110m precision so general map pins avoid doorstep precision."""
+    try:
+        if lat is None or lng is None:
+            return None, None
+        return round(float(lat), precision), round(float(lng), precision)
+    except (TypeError, ValueError):
+        return None, None
+
+
+def expire_stale_donor_locations(db=None, stale_minutes: int = None) -> int:
+    """
+    Expires stale live donor locations cleanly without deleting donor profiles.
+    Removes GeoJSON location & lat/lng when lastLocationUpdatedAt exceeds TTL.
+    """
+    db = db if db is not None else get_db()
+    now = datetime.now(timezone.utc)
+    ttl_mins = stale_minutes if stale_minutes is not None else Config.LOCATION_STALE_MINUTES
+    cutoff = now - timedelta(minutes=ttl_mins)
+
+    stale_filter = {
+        "$or": [
+            {"locationSharingEnabled": True, "lastLocationUpdatedAt": {"$lt": cutoff}},
+            {"locationSharingEnabled": True, "locationExpiresAt": {"$lte": now}},
+            {"location": {"$exists": True}, "lastLocationUpdatedAt": {"$lt": cutoff}},
+        ]
+    }
+    res = db.donors.update_many(
+        stale_filter,
+        {
+            "$set": {"locationSharingEnabled": False, "updatedAt": now},
+            "$unset": {
+                "location": "",
+                "lat": "",
+                "lng": "",
+                "locationExpiresAt": "",
+                "currentDonationLocation.lat": "",
+                "currentDonationLocation.lng": "",
+            },
+        },
+    )
+    return res.modified_count
+
+
+def is_donor_location_fresh(donor: dict, stale_minutes: int = None) -> bool:
+    """Checks whether a donor currently has consented, non-stale GPS coordinates."""
+    if not donor.get("locationSharingEnabled"):
+        return False
+    lat = donor.get("lat")
+    lng = donor.get("lng")
+    if (lat is None or lng is None) and isinstance(donor.get("location"), dict):
+        coords = donor["location"].get("coordinates") or []
+        if len(coords) == 2:
+            lng, lat = coords[0], coords[1]
+    if lat is None or lng is None:
+        return False
+
+    updated_at = donor.get("lastLocationUpdatedAt")
+    if not updated_at:
+        return False
+    try:
+        if isinstance(updated_at, str):
+            updated_dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+        else:
+            updated_dt = updated_at
+        if updated_dt.tzinfo is None:
+            updated_dt = updated_dt.replace(tzinfo=timezone.utc)
+        ttl_mins = stale_minutes if stale_minutes is not None else Config.LOCATION_STALE_MINUTES
+        return (datetime.now(timezone.utc) - updated_dt) <= timedelta(minutes=ttl_mins)
+    except Exception:
+        return False
 
 def haversine_distance_km(lat1, lon1, lat2, lon2):
     """Calculates great-circle distance between two GPS coordinates in kilometers."""
@@ -50,17 +132,47 @@ def haversine_distance_km(lat1, lon1, lat2, lon2):
     except Exception:
         return None
 
-def is_donor_compatible(donor_blood_group, patient_blood_group):
-    """Checks if donor blood group is serologically compatible for patient red blood cells"""
-    allowed_donors = COMPATIBLE_DONORS_FOR_PATIENT.get(patient_blood_group, [])
-    return donor_blood_group in allowed_donors
+def is_donor_cooldown_eligible(donor: dict):
+    """Returns (is_eligible, days_since_last_donation)."""
+    last_donation = donor.get("lastDonationDate")
+    if not last_donation:
+        return True, None
+    try:
+        if isinstance(last_donation, str):
+            last_dt = datetime.fromisoformat(last_donation.replace("Z", "+00:00"))
+        else:
+            last_dt = last_donation
+        if last_dt.tzinfo is None:
+            last_dt = last_dt.replace(tzinfo=timezone.utc)
+        days_since = (datetime.now(timezone.utc) - last_dt).days
+        return days_since >= 90, days_since
+    except Exception:
+        return True, None
+
 
 def get_effective_donor_location(donor):
     """
     Returns the active matching location for the donor.
-    If the donor is travelling and set matchingLocationPreference to 'CURRENT',
-    use their current donation location. Otherwise default to their home location.
+    Prioritizes consented live coordinates when fresh; falls back to travelling/home.
     """
+    if is_donor_location_fresh(donor):
+        lat = donor.get("lat")
+        lng = donor.get("lng")
+        if (lat is None or lng is None) and isinstance(donor.get("location"), dict):
+            coords = donor["location"].get("coordinates") or []
+            if len(coords) == 2:
+                lng, lat = coords[0], coords[1]
+        cur = donor.get("currentDonationLocation") or {}
+        return {
+            "city": (cur.get("city") or donor.get("city") or "").strip(),
+            "state": (cur.get("state") or donor.get("state") or "").strip(),
+            "pinCode": (cur.get("pinCode") or donor.get("pinCode") or "").strip(),
+            "lat": lat,
+            "lng": lng,
+            "isTemporaryLocation": bool(cur.get("city")),
+            "isLiveLocation": True,
+        }
+
     pref = donor.get("matchingLocationPreference", "HOME")
     cur = donor.get("currentDonationLocation") or {}
 
@@ -71,16 +183,18 @@ def get_effective_donor_location(donor):
             "pinCode": cur.get("pinCode", "").strip(),
             "lat": cur.get("lat"),
             "lng": cur.get("lng"),
-            "isTemporaryLocation": True
+            "isTemporaryLocation": True,
+            "isLiveLocation": False,
         }
-    
+
     return {
         "city": (donor.get("city") or "").strip(),
         "state": (donor.get("state") or "").strip(),
         "pinCode": (donor.get("pinCode") or "").strip(),
         "lat": donor.get("lat"),
         "lng": donor.get("lng"),
-        "isTemporaryLocation": False
+        "isTemporaryLocation": False,
+        "isLiveLocation": False,
     }
 
 def calculate_match_score(donor, patient_blood_group, request_city, request_state=None, req_lat=None, req_lng=None):
@@ -185,7 +299,16 @@ def find_matched_donors_for_request(request_doc, only_verified=False):
     req_lat = request_doc.get('lat') or request_doc.get('latitude')
     req_lng = request_doc.get('lng') or request_doc.get('longitude')
 
-    compatible_bgs = COMPATIBLE_DONORS_FOR_PATIENT.get(patient_bg, [patient_bg])
+    norm_bg = normalize_blood_group(patient_bg)
+    compatible_bgs = get_compatible_donor_groups(norm_bg)
+    if not compatible_bgs:
+        return {
+            "disclaimer": MATCHING_DISCLAIMER,
+            "patientBloodGroup": patient_bg,
+            "compatibleBloodGroups": [],
+            "totalMatches": 0,
+            "matches": [],
+        }
 
     query = {
         "bloodGroup": {"$in": compatible_bgs},
@@ -220,10 +343,9 @@ def find_matched_donors_for_request(request_doc, only_verified=False):
             donor_serialized["isExactMatch"] = (donor.get('bloodGroup') == patient_bg)
             
             # Protect precise coordinates
-            if "lat" in donor_serialized:
-                del donor_serialized["lat"]
-            if "lng" in donor_serialized:
-                del donor_serialized["lng"]
+            donor_serialized.pop("lat", None)
+            donor_serialized.pop("lng", None)
+            donor_serialized.pop("location", None)
             if "currentDonationLocation" in donor_serialized and isinstance(donor_serialized["currentDonationLocation"], dict):
                 donor_serialized["currentDonationLocation"].pop("lat", None)
                 donor_serialized["currentDonationLocation"].pop("lng", None)
@@ -244,3 +366,165 @@ def find_matched_donors_for_request(request_doc, only_verified=False):
         "totalMatches": len(matched_results),
         "matches": matched_results
     }
+
+
+def _strip_private_fields(donor_serialized: dict, include_approx_coords: bool = False):
+    """Removes precise coordinates and sensitive fields for privacy enforcement."""
+    raw_lat = donor_serialized.pop("lat", None)
+    raw_lng = donor_serialized.pop("lng", None)
+    geo = donor_serialized.pop("location", None)
+    if (raw_lat is None or raw_lng is None) and isinstance(geo, dict):
+        coords = geo.get("coordinates") or []
+        if len(coords) == 2:
+            raw_lng, raw_lat = coords[0], coords[1]
+
+    if "currentDonationLocation" in donor_serialized and isinstance(donor_serialized["currentDonationLocation"], dict):
+        donor_serialized["currentDonationLocation"].pop("lat", None)
+        donor_serialized["currentDonationLocation"].pop("lng", None)
+
+    raw_phone = donor_serialized.get("phone", "")
+    if raw_phone and len(raw_phone) >= 7:
+        donor_serialized["phoneMasked"] = raw_phone[:6] + " •••••"
+    else:
+        donor_serialized["phoneMasked"] = "Protected"
+    donor_serialized["phone"] = donor_serialized["phoneMasked"]
+    donor_serialized["address"] = f"{donor_serialized.get('city', '')}, {donor_serialized.get('state', '')}".strip(", ")
+
+    if include_approx_coords and raw_lat is not None and raw_lng is not None:
+        alat, alng = get_approximate_coords(raw_lat, raw_lng, precision=3)
+        donor_serialized["approxLat"] = alat
+        donor_serialized["approxLng"] = alng
+    return donor_serialized
+
+
+def find_nearby_donors(
+    hospital_lat: float,
+    hospital_lng: float,
+    patient_blood_group: str = None,
+    radius_km: int = 25,
+    only_verified: bool = True,
+    require_live_sharing: bool = True,
+    request_city: str = None,
+    request_state: str = None,
+    request_id: str = None,
+):
+    """
+    GeoJSON 2dsphere + Haversine nearby donor search engine for Hospitals & Admins.
+    Filters:
+      - Compatible RBC blood group (when patient_blood_group supplied)
+      - Verified donors (when only_verified=True)
+      - Available == True
+      - Non-blocked active user account
+      - Non-stale consented GPS coordinates within radius_km (when require_live_sharing=True)
+    Sorts nearest Haversine distance first, then matchScore descending.
+    """
+    db = get_db()
+    expire_stale_donor_locations(db)
+
+    lat_f, lng_f, gps_err = validate_gps_coordinates(hospital_lat, hospital_lng)
+    if gps_err:
+        return None, gps_err
+
+    try:
+        rad = int(radius_km) if radius_km is not None else Config.DEFAULT_SEARCH_RADIUS_KM
+    except (TypeError, ValueError):
+        rad = Config.DEFAULT_SEARCH_RADIUS_KM
+    if rad <= 0 or rad > 500:
+        return None, "Search radius must be between 1 and 500 km."
+
+    norm_bg = normalize_blood_group(patient_blood_group) if patient_blood_group else None
+    compatible_bgs = get_compatible_donor_groups(norm_bg) if norm_bg else None
+
+    match_query = {"availability": True}
+    if only_verified:
+        match_query["verificationStatus"] = "VERIFIED"
+    if compatible_bgs:
+        match_query["bloodGroup"] = {"$in": compatible_bgs}
+    if require_live_sharing:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=Config.LOCATION_STALE_MINUTES)
+        match_query["locationSharingEnabled"] = True
+        match_query["lastLocationUpdatedAt"] = {"$gte": cutoff}
+
+    raw_donors = []
+    used_geonear = False
+    try:
+        pipeline = [
+            {
+                "$geoNear": {
+                    "near": make_geojson_point(lat_f, lng_f),
+                    "distanceField": "geoDistanceMeters",
+                    "maxDistance": rad * 1000,
+                    "spherical": True,
+                    "query": match_query,
+                }
+            },
+            {"$limit": 200},
+        ]
+        raw_donors = list(db.donors.aggregate(pipeline))
+        used_geonear = True
+    except Exception:
+        # Fallback if index missing in ephemeral mock or older collection
+        raw_donors = list(db.donors.find(match_query).limit(300))
+
+    # Map existing invitations for request_id if provided
+    invite_map = {}
+    if request_id:
+        for inv in db.request_invitations.find({"requestId": str(request_id)}):
+            invite_map[str(inv.get("donorId"))] = inv.get("status", "PENDING")
+
+    results = []
+    for donor in raw_donors:
+        if require_live_sharing and not is_donor_location_fresh(donor):
+            continue
+
+        # Exclude blocked user accounts
+        user_id = donor.get("userId")
+        if user_id and ObjectId.is_valid(str(user_id)):
+            u_doc = db.users.find_one({"_id": ObjectId(str(user_id))}, {"status": 1})
+            if u_doc and u_doc.get("status") == "BLOCKED":
+                continue
+
+        d_lat = donor.get("lat")
+        d_lng = donor.get("lng")
+        if (d_lat is None or d_lng is None) and isinstance(donor.get("location"), dict):
+            coords = donor["location"].get("coordinates") or []
+            if len(coords) == 2:
+                d_lng, d_lat = coords[0], coords[1]
+
+        dist_km = haversine_distance_km(d_lat, d_lng, lat_f, lng_f)
+        if dist_km is None or dist_km > float(rad):
+            continue
+
+        target_bg = norm_bg or donor.get("bloodGroup", "O+")
+        score, breakdown, _ = calculate_match_score(
+            donor, target_bg, request_city or donor.get("city"), request_state or donor.get("state"), lat_f, lng_f
+        )
+        eligible_cooldown, days_since = is_donor_cooldown_eligible(donor)
+
+        d_ser = serialize_doc(donor)
+        donor_id_str = str(d_ser.get("id"))
+        d_ser["distanceKm"] = dist_km
+        d_ser["matchScore"] = score
+        d_ser["matchLabel"] = f"{score}% Match"
+        d_ser["matchBreakdown"] = breakdown
+        d_ser["isExactMatch"] = bool(norm_bg and d_ser.get("bloodGroup") == norm_bg)
+        d_ser["isCooldownEligible"] = eligible_cooldown
+        d_ser["daysSinceLastDonation"] = days_since
+        d_ser["invitationStatus"] = invite_map.get(donor_id_str)
+        _strip_private_fields(d_ser, include_approx_coords=True)
+        results.append(d_ser)
+
+    results.sort(key=lambda x: (x["distanceKm"], -x["matchScore"]))
+
+    next_radii = [r for r in Config.ALLOWED_SEARCH_RADII_KM if r > rad]
+    return {
+        "disclaimer": MATCHING_DISCLAIMER,
+        "radiusKm": rad,
+        "allowedRadiiKm": Config.ALLOWED_SEARCH_RADII_KM,
+        "suggestedExpandRadiusKm": next_radii[0] if (len(results) == 0 and next_radii) else None,
+        "patientBloodGroup": norm_bg,
+        "compatibleBloodGroups": compatible_bgs or [],
+        "totalMatches": len(results),
+        "usedGeospatialIndex": used_geonear,
+        "donors": results,
+    }, None

@@ -6,6 +6,7 @@ import { BLOOD_GROUPS, INDIAN_STATES, getCitiesByState, URGENCIES } from '../../
 import StatusBadge from '../../components/common/StatusBadge';
 import UrgencyBadge from '../../components/common/UrgencyBadge';
 import DisclaimerAlert from '../../components/common/DisclaimerAlert';
+import DonorLiveTrackingCard from '../../components/donor/DonorLiveTrackingCard';
 import { 
   FaFilter, 
   FaSearch, 
@@ -103,6 +104,9 @@ const AvailableRequests = () => {
           <button type="button" className="btn-close py-2.5" onClick={() => { setFeedback(''); setLastAcceptedId(null); }} />
         </div>
       )}
+
+      {/* Real-Time Donor GPS & Emergency Invitations */}
+      <DonorLiveTrackingCard onStatusChange={fetchRequests} />
 
       {/* Filter Bar */}
       <div className="bc-card p-3 bg-white mb-4 shadow-sm">

@@ -1,8 +1,10 @@
+import os
 import urllib.request
 import json
 import time
 
-BASE_URL = "http://127.0.0.1:5000/api"
+PORT = os.getenv("PORT", "8000")
+BASE_URL = os.getenv("BASE_URL", f"http://127.0.0.1:{PORT}/api")
 
 def make_request(endpoint, method="GET", data=None, token=None):
     url = f"{BASE_URL}{endpoint}"
@@ -202,7 +204,7 @@ def test_full_system():
     test_req_id = res["data"]["id"]
 
     code, res = make_request(f"/requests/{test_req_id}/status", method="PUT", data={"status": "APPROVED"}, token=admin_token)
-    assert code == 200
+    assert code == 200, f"Updating status to APPROVED failed: {code} {res}"
     assert res["data"]["status"] == "APPROVED"
 
     code, res = make_request(f"/requests/{test_req_id}/status", method="PUT", data={"status": "FULFILLED"}, token=admin_token)

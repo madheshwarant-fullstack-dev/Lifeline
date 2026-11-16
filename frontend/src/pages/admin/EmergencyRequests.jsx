@@ -1,29 +1,39 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { requestService } from '../../services/requestService';
+import { adminService } from '../../services/adminService';
+import { useWebSocket } from '../../context/WebSocketContext';
 import UrgencyBadge from '../../components/common/UrgencyBadge';
 import StatusBadge from '../../components/common/StatusBadge';
 import { FaExclamationTriangle, FaHospital, FaPhoneAlt, FaMapMarkerAlt, FaCalendarAlt, FaArrowRight, FaClock } from 'react-icons/fa';
 
 const EmergencyRequests = () => {
+  const { subscribe } = useWebSocket();
   const [emergencies, setEmergencies] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchEmergencies = async () => {
-      try {
-        const res = await requestService.getRequests({ urgency: 'EMERGENCY' });
-        if (res && res.data) {
-          setEmergencies(res.data);
-        }
-      } catch (err) {
-        console.error('Failed to load emergency queue:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchEmergencies();
+  const fetchEmergencies = useCallback(async () => {
+    try {
+      const res = await adminService.getAdminRequests({ urgency: 'EMERGENCY' });
+      const list = res?.data?.requests || res?.data || [];
+      setEmergencies(list);
+    } catch (err) {
+      console.error('Failed to load emergency queue:', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchEmergencies();
+    const u1 = subscribe('request_created', fetchEmergencies);
+    const u2 = subscribe('donor_responded', fetchEmergencies);
+    const u3 = subscribe('request_status_updated', fetchEmergencies);
+    return () => {
+      u1();
+      u2();
+      u3();
+    };
+  }, [fetchEmergencies, subscribe]);
 
   const getTimeAgo = (dateStr) => {
     try {

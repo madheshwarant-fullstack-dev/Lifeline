@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { requestService } from '../../services/requestService';
+import RequestLiveRadarPanel from '../../components/maps/RequestLiveRadarPanel';
 import { screeningService } from '../../services/screeningService';
 import { donorService } from '../../services/donorService';
 import { useAuth } from '../../context/AuthContext';
@@ -20,8 +21,11 @@ import {
   FaHeartbeat, 
   FaCheck, 
   FaTimes, 
-  FaUserMd 
+  FaUserMd,
+  FaStethoscope,
+  FaInfoCircle 
 } from 'react-icons/fa';
+import DonorMedicalReviewCard from '../../components/donor/DonorMedicalReviewCard';
 
 const RequestDetails = () => {
   const { id } = useParams();
@@ -33,6 +37,10 @@ const RequestDetails = () => {
   const [loading, setLoading] = useState(true);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [errorFeedback, setErrorFeedback] = useState('');
+  const [reviewingDonor, setReviewingDonor] = useState(null);
+  const [acceptedDonorReview, setAcceptedDonorReview] = useState(null);
+  const [loadingDonorReview, setLoadingDonorReview] = useState(false);
 
   const getBackTarget = () => {
     if (!user) return '/';
@@ -59,6 +67,17 @@ const RequestDetails = () => {
 
       if (res && res.data) {
         setRequestDoc(res.data);
+        if (res.data.acceptedDonorId) {
+          try {
+            setLoadingDonorReview(true);
+            const revRes = await donorService.getMedicalReview(res.data.acceptedDonorId, id);
+            setAcceptedDonorReview(revRes?.data || revRes || null);
+          } catch (re) {
+            console.warn('Could not load accepted donor medical review:', re);
+          } finally {
+            setLoadingDonorReview(false);
+          }
+        }
       }
       if (matchRes && matchRes.data) {
         setMatchedDonors(matchRes.data.matches || []);
@@ -92,6 +111,8 @@ const RequestDetails = () => {
 
   const handleUpdateStatus = async (newStatus) => {
     setStatusUpdating(true);
+    setFeedback('');
+    setErrorFeedback('');
     try {
       const res = await requestService.updateRequestStatus(id, newStatus);
       if (res && res.data) {
@@ -99,7 +120,7 @@ const RequestDetails = () => {
         setFeedback(`Request status updated to ${newStatus}.`);
       }
     } catch (e) {
-      alert("Failed to update status.");
+      setErrorFeedback(e.response?.data?.message || 'Failed to update request status.');
     } finally {
       setStatusUpdating(false);
     }
@@ -147,12 +168,16 @@ const RequestDetails = () => {
               disabled={statusUpdating}
               onChange={(e) => handleUpdateStatus(e.target.value)}
             >
+              <option value="OPEN">OPEN</option>
               <option value="PENDING">PENDING</option>
+              <option value="APPROVED">APPROVED</option>
               <option value="MATCHED">MATCHED</option>
               <option value="DONOR_CONTACTED">DONOR_CONTACTED</option>
               <option value="ACCEPTED">ACCEPTED</option>
+              <option value="SCREENING_SUBMITTED">SCREENING_SUBMITTED</option>
               <option value="SCHEDULED">SCHEDULED</option>
               <option value="DONATION_COMPLETED">DONATION_COMPLETED</option>
+              <option value="FULFILLED">FULFILLED</option>
               <option value="CANCELLED">CANCELLED</option>
               <option value="CLOSED">CLOSED</option>
             </select>
@@ -164,6 +189,13 @@ const RequestDetails = () => {
         <div className="alert alert-success alert-dismissible fade show small py-2.5 mb-4" role="alert">
           <FaCheckCircle className="me-2" /> {feedback}
           <button type="button" className="btn-close py-2.5" onClick={() => setFeedback('')} />
+        </div>
+      )}
+
+      {errorFeedback && (
+        <div className="alert alert-danger alert-dismissible fade show small py-2.5 mb-4" role="alert">
+          <FaTimes className="me-2" /> {errorFeedback}
+          <button type="button" className="btn-close py-2.5" onClick={() => setErrorFeedback('')} />
         </div>
       )}
 
@@ -244,20 +276,155 @@ const RequestDetails = () => {
           </div>
         )}
 
-        {/* Accepted Donor Highlight */}
+        {/* Accepted Donor Highlight & Medical Clearance Card */}
         {requestDoc.acceptedDonorName && (
-          <div className="p-3 bg-success-subtle border border-success-subtle rounded-3 mb-4 d-flex flex-column flex-sm-row align-items-sm-center justify-content-between gap-2">
-            <div className="d-flex align-items-center gap-2">
-              <FaCheckCircle className="text-success fs-4 flex-shrink-0" />
-              <div>
-                <strong className="text-dark d-block">Donor Confirmed: {requestDoc.acceptedDonorName}</strong>
-                <small className="text-muted">Contact: {requestDoc.acceptedDonorPhone || 'Coordinate via platform'}</small>
+          <>
+            <div className="p-3 bg-success-subtle border border-success-subtle rounded-3 mb-3 d-flex flex-column flex-sm-row align-items-sm-center justify-content-between gap-2 shadow-sm">
+              <div className="d-flex align-items-center gap-2">
+                <FaCheckCircle className="text-success fs-4 flex-shrink-0" />
+                <div>
+                  <strong className="text-dark d-block">Donor Confirmed: {requestDoc.acceptedDonorName}</strong>
+                  <small className="text-muted">Contact: {requestDoc.acceptedDonorPhone || 'Coordinate via platform'}</small>
+                </div>
+              </div>
+              <div className="d-flex align-items-center gap-2">
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-danger bg-white fw-bold d-inline-flex align-items-center gap-1.5 shadow-sm px-3"
+                  onClick={() => setReviewingDonor({
+                    id: requestDoc.acceptedDonorId,
+                    donorId: requestDoc.acceptedDonorId,
+                    name: requestDoc.acceptedDonorName,
+                    phone: requestDoc.acceptedDonorPhone,
+                    bloodGroup: acceptedDonorReview?.bloodGroup || requestDoc.bloodGroup
+                  })}
+                >
+                  <FaStethoscope className="text-danger" /> View Donor Medical Review
+                </button>
+                <span className="badge bg-success text-white py-1.5 px-3 rounded-pill fw-bold">
+                  Donor Accepted
+                </span>
               </div>
             </div>
-            <span className="badge bg-success text-white py-1.5 px-3 rounded-pill fw-bold">
-              Donor Accepted
-            </span>
-          </div>
+
+            {/* Confirmed Donor Medical Review & Clearance Summary */}
+            <div className="card border shadow-sm rounded-3 mb-4 overflow-hidden">
+              <div className="card-header bg-white py-3 px-3.5 border-bottom d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2">
+                <div className="d-flex align-items-center gap-2">
+                  <span className="rounded-circle p-2 bg-danger-subtle text-danger d-flex align-items-center justify-content-center" style={{ width: 34, height: 34 }}>
+                    <FaStethoscope size={15} />
+                  </span>
+                  <div>
+                    <h6 className="fw-bold text-dark mb-0">Donor Medical Clearance &amp; Health Profile</h6>
+                    <small className="text-muted">Clinical eligibility and pre-donation declaration for {requestDoc.acceptedDonorName}</small>
+                  </div>
+                </div>
+
+                <div>
+                  {acceptedDonorReview ? (
+                    <span className={`badge py-1.5 px-3 rounded-pill fw-bold ${
+                      (acceptedDonorReview.medicalReviewStatus || '').toUpperCase().includes('VERIFIED')
+                        ? 'bg-success text-white'
+                        : (acceptedDonorReview.medicalReviewStatus || '').toUpperCase().includes('ASSESSMENT')
+                        ? 'bg-warning text-dark'
+                        : (acceptedDonorReview.medicalReviewStatus || '').toUpperCase().includes('NOT')
+                        ? 'bg-danger text-white'
+                        : 'bg-secondary text-white'
+                    }`}>
+                      {acceptedDonorReview.medicalReviewStatus || 'Pending Verification'}
+                    </span>
+                  ) : (
+                    <span className="badge bg-secondary text-white py-1.5 px-3 rounded-pill">
+                      {loadingDonorReview ? 'Loading Review...' : 'Pending Verification'}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="card-body p-3.5 bg-light bg-opacity-50">
+                <div className="row g-3">
+                  <div className="col-sm-6 col-lg-3">
+                    <div className="p-3 bg-white rounded-3 border h-100">
+                      <small className="text-muted d-block mb-1">Donor Name &amp; Blood Group</small>
+                      <strong className="text-dark d-block">{requestDoc.acceptedDonorName}</strong>
+                      <span className="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill mt-1" style={{ fontSize: '11px' }}>
+                        Blood Group {acceptedDonorReview?.bloodGroup || requestDoc.bloodGroup}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="col-sm-6 col-lg-3">
+                    <div className="p-3 bg-white rounded-3 border h-100">
+                      <small className="text-muted d-block mb-1">Health Declaration</small>
+                      <strong className="text-success d-flex align-items-center gap-1.5">
+                        <FaCheckCircle className="text-success" />
+                        {acceptedDonorReview?.healthDeclarationStatus || 'Declared & Signed'}
+                      </strong>
+                      <small className="text-muted d-block mt-1" style={{ fontSize: '11px' }}>
+                        Truthfulness confirmation logged
+                      </small>
+                    </div>
+                  </div>
+
+                  <div className="col-sm-6 col-lg-3">
+                    <div className="p-3 bg-white rounded-3 border h-100">
+                      <small className="text-muted d-block mb-1">Last Blood Donation</small>
+                      <strong className="text-dark d-block">
+                        {acceptedDonorReview?.lastDonationDate
+                          ? new Date(acceptedDonorReview.lastDonationDate).toLocaleDateString()
+                          : 'Never logged'}
+                      </strong>
+                      <small className="text-muted d-block mt-1" style={{ fontSize: '11px' }}>
+                        Total completed: {acceptedDonorReview?.totalDonations || 0} donation(s)
+                      </small>
+                    </div>
+                  </div>
+
+                  <div className="col-sm-6 col-lg-3">
+                    <div className="p-3 bg-white rounded-3 border h-100">
+                      <small className="text-muted d-block mb-1">Clinical Clearance Status</small>
+                      <strong className="text-primary d-block">
+                        {acceptedDonorReview?.medicalEligibilityStatus || 'Pending Medical Staff Review'}
+                      </strong>
+                      <small className="text-muted d-block mt-1" style={{ fontSize: '11px' }}>
+                        Verification: {acceptedDonorReview?.donorVerificationStatus || 'Verified'}
+                      </small>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Clinical Safety & Privacy Notices */}
+                <div className="mt-3 p-3 bg-white rounded-3 border">
+                  <div className="d-flex align-items-start gap-2 text-secondary small">
+                    <FaInfoCircle className="text-danger flex-shrink-0 mt-0.5" size={14} />
+                    <div>
+                      <strong className="text-dark">Clinical Safety Disclaimer:</strong>{' '}
+                      {acceptedDonorReview?.disclaimer ||
+                        'Do not automatically declare a donor medically eligible based on a form. Final eligibility must be determined by qualified medical personnel at the donation centre.'}
+                    </div>
+                  </div>
+                  <div className="small text-muted mt-2 pt-2 border-top d-flex align-items-center justify-content-between flex-wrap gap-2" style={{ fontSize: '11px' }}>
+                    <span>
+                      🔒 <strong>Medical Privacy Protected:</strong> Private health history, medications, and clinical disclosures are restricted from public view and exclusively accessible to authorized clinical personnel.
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-xs btn-outline-danger py-0.5 px-2 rounded fw-semibold"
+                      onClick={() => setReviewingDonor({
+                        id: requestDoc.acceptedDonorId,
+                        donorId: requestDoc.acceptedDonorId,
+                        name: requestDoc.acceptedDonorName,
+                        phone: requestDoc.acceptedDonorPhone,
+                        bloodGroup: acceptedDonorReview?.bloodGroup || requestDoc.bloodGroup
+                      })}
+                    >
+                      View Modal Card &rarr;
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
         )}
 
         {/* DONOR ACTION / SCREENING PROMPT SECTION */}
@@ -311,25 +478,42 @@ const RequestDetails = () => {
           </div>
         )}
 
-        {/* MEDICAL STAFF / ADMIN SCREENING REVIEW CALLOUT */}
-        {(user?.role === 'ADMIN' || user?.role === 'HOSPITAL') && screening && (
-          <div className="p-4 rounded-3 border bg-warning-subtle border-warning-subtle mb-4 shadow-sm">
+        {/* PRE-DONATION HEALTH SCREENING STATUS SECTION */}
+        {screening && (
+          <div className="p-3.5 rounded-3 border bg-warning-subtle border-warning-subtle mb-4 shadow-sm">
             <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3">
               <div>
                 <h6 className="fw-bold text-dark mb-1 d-flex align-items-center gap-2">
-                  <FaUserMd className="text-danger" /> Pre-Donation Medical Screening Record
+                  <FaUserMd className="text-danger" /> Pre-Donation Medical Screening Questionnaire
                 </h6>
                 <div className="small text-secondary">
-                  Status: <strong>{screening.status}</strong> • Flagged Disclosures: {screening.hasFlaggedAnswers ? '⚠️ Disclosures reported' : 'None reported'}
+                  Status: <strong className="text-dark">{screening.status === 'AWAITING_REVIEW' ? 'Screening Submitted – Awaiting Medical Review' : screening.status?.replace('_', ' ')}</strong> • 
+                  Health Declaration: <span className="badge bg-success-subtle text-success border border-success-subtle ms-1">Confirmed by Donor</span> • 
+                  Submitted: {screening.createdAt ? new Date(screening.createdAt).toLocaleString() : 'Recently'}
                 </div>
+                <small className="text-muted d-block mt-1">
+                  Confidential clinical questionnaire is evaluated by hospital transfusion medical officers prior to donor collection.
+                </small>
               </div>
-              <Link to="/admin/screenings" className="btn btn-danger btn-sm fw-bold rounded-pill px-3 py-1.5">
-                Open Medical Screening Console &rarr;
-              </Link>
+              <div className="flex-shrink-0">
+                {(user?.role === 'ADMIN' || user?.role === 'HOSPITAL') ? (
+                  <Link to="/admin/screenings" className="btn btn-danger btn-sm fw-bold rounded-pill px-3 py-1.5">
+                    Open Medical Screening Console &rarr;
+                  </Link>
+                ) : (
+                  <span className="badge bg-warning text-dark py-2 px-3 rounded-pill fw-bold">
+                    Awaiting Clinical Clearance
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         )}
       </div>
+
+      {requestDoc && (
+        <RequestLiveRadarPanel requestDoc={requestDoc} />
+      )}
 
       {/* 2. MATCHED DONORS SECTION */}
       <div className="bc-card p-4 p-lg-5 bg-white mb-4 shadow-sm">
@@ -404,9 +588,18 @@ const RequestDetails = () => {
                       </span>
                     </td>
                     <td className="text-end">
-                      <a href={`tel:${donor.phone}`} className="btn btn-sm btn-outline-danger rounded-pill px-3 fw-bold d-inline-flex align-items-center gap-1">
-                        <FaPhoneAlt size={10} /> Call {donor.phone || 'Donor'}
-                      </a>
+                      <div className="d-inline-flex align-items-center gap-1.5">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary rounded-pill px-2.5 fw-semibold d-inline-flex align-items-center gap-1"
+                          onClick={() => setReviewingDonor(donor)}
+                        >
+                          <FaStethoscope size={10} className="text-danger" /> Review
+                        </button>
+                        <a href={`tel:${donor.phone}`} className="btn btn-sm btn-outline-danger rounded-pill px-3 fw-bold d-inline-flex align-items-center gap-1">
+                          <FaPhoneAlt size={10} /> Call {donor.phone || 'Donor'}
+                        </a>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -417,6 +610,26 @@ const RequestDetails = () => {
       </div>
 
       <DisclaimerAlert />
+
+      {reviewingDonor && (
+        <div
+          className="modal fade show d-block"
+          style={{ backgroundColor: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(3px)', zIndex: 1060 }}
+          tabIndex="-1"
+          role="dialog"
+        >
+          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 520 }}>
+            <div className="modal-content border-0 shadow-lg p-0" style={{ borderRadius: 16 }}>
+              <DonorMedicalReviewCard
+                donorId={reviewingDonor.id || reviewingDonor.donorId}
+                donorSummary={reviewingDonor}
+                requestId={id}
+                onClose={() => setReviewingDonor(null)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,7 +1,7 @@
 import os
 import re
 import pymongo
-from pymongo import ASCENDING, DESCENDING
+from pymongo import ASCENDING, DESCENDING, GEOSPHERE
 from bson import ObjectId
 from datetime import datetime
 from config import Config
@@ -122,8 +122,11 @@ def init_indexes(db):
         db.donors.create_index([("state", ASCENDING)])
         db.donors.create_index([("availability", ASCENDING)])
         db.donors.create_index([("verificationStatus", ASCENDING)])
+        db.donors.create_index([("locationSharingEnabled", ASCENDING), ("lastLocationUpdatedAt", DESCENDING)])
         db.donors.create_index([("bloodGroup", ASCENDING), ("city", ASCENDING), ("availability", ASCENDING)])
         db.donors.create_index([("bloodGroup", ASCENDING), ("state", ASCENDING), ("availability", ASCENDING)])
+        db.donors.update_many({"location": None}, {"$unset": {"location": ""}})
+        db.donors.create_index([("location", GEOSPHERE)], sparse=True)
 
         # Blood Requests indexes
         db.blood_requests.create_index([("bloodGroup", ASCENDING)])
@@ -133,6 +136,8 @@ def init_indexes(db):
         db.blood_requests.create_index([("status", ASCENDING)])
         db.blood_requests.create_index([("requesterId", ASCENDING)])
         db.blood_requests.create_index([("createdAt", DESCENDING)])
+        db.blood_requests.update_many({"location": None}, {"$unset": {"location": ""}})
+        db.blood_requests.create_index([("location", GEOSPHERE)], sparse=True)
 
         # Donations indexes
         db.donations.create_index([("donationId", ASCENDING)], unique=True)
@@ -145,6 +150,13 @@ def init_indexes(db):
         db.hospitals.create_index([("userId", ASCENDING)], unique=True)
         db.hospitals.create_index([("city", ASCENDING)])
         db.hospitals.create_index([("state", ASCENDING)])
+        db.hospitals.update_many({"location": None}, {"$unset": {"location": ""}})
+        db.hospitals.create_index([("location", GEOSPHERE)], sparse=True)
+
+        # Request Invitations indexes
+        db.request_invitations.create_index([("requestId", ASCENDING), ("donorId", ASCENDING)], unique=True)
+        db.request_invitations.create_index([("donorUserId", ASCENDING), ("status", ASCENDING)])
+        db.request_invitations.create_index([("hospitalId", ASCENDING), ("createdAt", DESCENDING)])
 
         # Notifications indexes
         db.notifications.create_index([("recipientId", ASCENDING), ("createdAt", DESCENDING)])
@@ -159,6 +171,12 @@ def init_indexes(db):
         db.health_screenings.create_index([("donorUserId", ASCENDING)])
         db.health_screenings.create_index([("status", ASCENDING)])
         db.health_screenings.create_index([("createdAt", DESCENDING)])
+
+        # Donor Medical Profiles indexes
+        db.donor_medical_profiles.create_index([("donorId", ASCENDING)], unique=True)
+        db.donor_medical_profiles.create_index([("userId", ASCENDING)], unique=True)
+        db.donor_medical_profiles.create_index([("medicalReviewStatus", ASCENDING)])
+        db.donor_medical_profiles.create_index([("updatedAt", DESCENDING)])
         
         print("[MongoDB Atlas] Indexes initialized successfully.")
     except Exception as e:

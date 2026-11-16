@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { adminService } from '../../services/adminService';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
 import { BLOOD_GROUPS } from '../../utils/constants';
 import { FaSearch, FaBan, FaCheck, FaTrash, FaCheckCircle, FaExclamationCircle, FaShieldAlt } from 'react-icons/fa';
 
@@ -11,6 +12,8 @@ const UsersManagement = ({ initialRole = '' }) => {
   const [bgFilter, setBgFilter] = useState('');
   const [feedback, setFeedback] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [deleteTargetUser, setDeleteTargetUser] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     setRoleFilter(initialRole);
@@ -77,18 +80,25 @@ const UsersManagement = ({ initialRole = '' }) => {
     }
   };
 
-  const handleDeleteUser = async (user) => {
-    if (!window.confirm(`Permanently delete account for "${user.name}" (${user.email})? This removes all associated donor data.`)) {
-      return;
-    }
+  const handleDeleteUser = (user) => {
+    setDeleteTargetUser(user);
+  };
+
+  const executeDeleteUser = async () => {
+    if (!deleteTargetUser) return;
+    setDeleting(true);
     try {
       setFeedback('');
       setErrorMsg('');
-      await adminService.deleteUser(user.id);
-      setFeedback(`Account for ${user.name} was deleted successfully.`);
+      await adminService.deleteUser(deleteTargetUser.id);
+      setFeedback(`Account for ${deleteTargetUser.name} was deleted successfully.`);
+      setDeleteTargetUser(null);
       fetchUsers();
     } catch (err) {
-      setErrorMsg(err.response?.data?.message || 'Failed to delete account.');
+      setErrorMsg(err.response?.data?.detail || err.response?.data?.message || 'Failed to delete account.');
+      setDeleteTargetUser(null);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -333,6 +343,17 @@ const UsersManagement = ({ initialRole = '' }) => {
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={Boolean(deleteTargetUser)}
+        variant="danger"
+        title="Permanently Delete User Account?"
+        message={`Delete "${deleteTargetUser?.name}" (${deleteTargetUser?.email})? This removes all associated user and profile data.`}
+        confirmLabel="Delete Account"
+        loading={deleting}
+        onConfirm={executeDeleteUser}
+        onCancel={() => setDeleteTargetUser(null)}
+      />
     </div>
   );
 };

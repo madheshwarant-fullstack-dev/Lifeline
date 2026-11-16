@@ -1,5 +1,6 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { useAuth } from './context/AuthContext';
 
 // Layouts
 import MainLayout from './layouts/MainLayout';
@@ -12,7 +13,6 @@ import ProtectedRoute from './components/common/ProtectedRoute';
 // Public Pages
 import Home from './pages/public/Home';
 import About from './pages/public/About';
-import HowItWorks from './pages/public/HowItWorks';
 import BloodGroups from './pages/public/BloodGroups';
 import HospitalInfo from './pages/public/HospitalInfo';
 import Contact from './pages/public/Contact';
@@ -24,13 +24,20 @@ import FindDonors from './pages/public/FindDonors';
 import DonorDashboard from './pages/donor/DonorDashboard';
 import DonorProfile from './pages/donor/DonorProfile';
 import AvailableRequests from './pages/donor/AvailableRequests';
+import DonorEmergencyRequests from './pages/donor/DonorEmergencyRequests';
 import DonationHistory from './pages/donor/DonationHistory';
 import DonorNotifications from './pages/donor/DonorNotifications';
 import DonationScreening from './pages/donor/DonationScreening';
 
 // Requester Pages
 import RequesterDashboard from './pages/requester/RequesterDashboard';
+import HospitalDashboard from './pages/hospital/HospitalDashboard';
 import CreateBloodRequest from './pages/requester/CreateBloodRequest';
+
+const RoleAwareRequesterDashboard = () => {
+  const { user } = useAuth();
+  return user?.role === 'HOSPITAL' ? <HospitalDashboard /> : <RequesterDashboard />;
+};
 import MyRequests from './pages/requester/MyRequests';
 import RequestDetails from './pages/requester/RequestDetails';
 
@@ -53,7 +60,6 @@ function App() {
       <Route element={<MainLayout />}>
         <Route path="/" element={<Home />} />
         <Route path="/about" element={<About />} />
-        <Route path="/how-it-works" element={<HowItWorks />} />
         <Route path="/blood-groups" element={<BloodGroups />} />
         <Route path="/hospital-info" element={<HospitalInfo />} />
         <Route path="/contact" element={<Contact />} />
@@ -77,6 +83,7 @@ function App() {
         <Route path="dashboard" element={<DonorDashboard />} />
         <Route path="profile" element={<DonorProfile />} />
         <Route path="available-requests" element={<AvailableRequests />} />
+        <Route path="emergency-requests" element={<DonorEmergencyRequests />} />
         <Route path="screening/:requestId" element={<DonationScreening />} />
         <Route path="history" element={<DonationHistory />} />
         <Route path="notifications" element={<DonorNotifications />} />
@@ -92,10 +99,23 @@ function App() {
         }
       >
         <Route index element={<Navigate to="/requester/dashboard" replace />} />
-        <Route path="dashboard" element={<RequesterDashboard />} />
+        <Route path="dashboard" element={<RoleAwareRequesterDashboard />} />
         <Route path="create-request" element={<CreateBloodRequest />} />
         <Route path="my-requests" element={<MyRequests />} />
         <Route path="notifications" element={<DonorNotifications />} />
+      </Route>
+
+      {/* 3b. HOSPITAL PORTAL ROUTES (Protected: HOSPITAL, ADMIN) */}
+      <Route
+        path="/hospital"
+        element={
+          <ProtectedRoute allowedRoles={['HOSPITAL', 'ADMIN']}>
+            <DashboardLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Navigate to="/hospital/dashboard" replace />} />
+        <Route path="dashboard" element={<HospitalDashboard />} />
       </Route>
 
       {/* 4. ADMIN LOGIN */}

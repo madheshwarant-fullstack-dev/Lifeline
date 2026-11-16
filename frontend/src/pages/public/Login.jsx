@@ -156,6 +156,17 @@ const Login = () => {
               </button>
               <button
                 type="button"
+                className="btn btn-outline-success btn-sm text-start py-2 px-3 small d-flex justify-content-between align-items-center"
+                onClick={() => fillDemoAccount('apollo@bloodconnect.org', 'Hospital123!')}
+              >
+                <div>
+                  <strong className="d-block text-success">Demo Hospital: Apollo Hospital Chennai</strong>
+                  <span className="text-muted" style={{ fontSize: '11px' }}>apollo@bloodconnect.org</span>
+                </div>
+                <span className="badge bg-success-subtle text-success">HOSPITAL</span>
+              </button>
+              <button
+                type="button"
                 className="btn btn-outline-dark btn-sm text-start py-2 px-3 small d-flex justify-content-between align-items-center"
                 onClick={() => fillDemoAccount('admin@bloodconnect.org', 'AdminPassword123!')}
               >

@@ -114,11 +114,6 @@ const Footer = () => {
                 </Link>
               </li>
               <li>
-                <Link to="/how-it-works" className="footer-link">
-                  <BsChevronRight className="footer-link-arrow" /> How It Works
-                </Link>
-              </li>
-              <li>
                 <Link to="/hospital-info" className="footer-link">
                   <BsChevronRight className="footer-link-arrow" /> Hospital Info
                 </Link>

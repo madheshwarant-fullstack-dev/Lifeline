@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { requestService } from '../../services/requestService';
+import LiveDonorMap from '../../components/maps/LiveDonorMap';
 import { BLOOD_GROUPS, INDIAN_STATES, DEFAULT_STATE, DEFAULT_CITY, getCitiesByState, URGENCIES } from '../../utils/constants';
 import DisclaimerAlert from '../../components/common/DisclaimerAlert';
-import { FaExclamationTriangle, FaExclamationCircle, FaHospital, FaShieldAlt } from 'react-icons/fa';
+import { FaExclamationTriangle, FaExclamationCircle, FaHospital, FaLocationArrow, FaShieldAlt } from 'react-icons/fa';
 
 const CreateBloodRequest = () => {
   const { user } = useAuth();
@@ -35,8 +36,40 @@ const CreateBloodRequest = () => {
     contactNumber: user?.phone || '',
     requiredDate: tomorrowStr,
     urgency: 'NORMAL',
-    additionalMessage: ''
+    additionalMessage: '',
+    lat: isHospital && Number.isFinite(Number(user?.lat ?? hospitalProfile?.lat))
+      ? Number(user?.lat ?? hospitalProfile?.lat)
+      : '',
+    lng: isHospital && Number.isFinite(Number(user?.lng ?? hospitalProfile?.lng))
+      ? Number(user?.lng ?? hospitalProfile?.lng)
+      : '',
+    searchRadiusKm: 25
   });
+  const [capturingGps, setCapturingGps] = useState(false);
+
+  const handleCaptureGps = () => {
+    setError('');
+    if (!navigator?.geolocation) {
+      setError('Browser Geolocation API is unavailable. Click directly on the map to pin coordinates.');
+      return;
+    }
+    setCapturingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setFormData((prev) => ({
+          ...prev,
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+        }));
+        setCapturingGps(false);
+      },
+      (geoErr) => {
+        setCapturingGps(false);
+        setError(geoErr.message || 'Unable to capture GPS coordinates. Click the map to place the hospital pin.');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   useEffect(() => {
     if (isHospital) {
@@ -96,7 +129,22 @@ const CreateBloodRequest = () => {
     setLoading(true);
 
     try {
-      const res = await requestService.createRequest(formData);
+      const payload = {
+        ...formData,
+        unitsRequired: units,
+        searchRadiusKm: Number(formData.searchRadiusKm) || 25,
+      };
+      if (formData.lat !== '' && formData.lng !== '') {
+        payload.lat = Number(formData.lat);
+        payload.lng = Number(formData.lng);
+      } else {
+        delete payload.lat;
+        delete payload.lng;
+      }
+
+      const res = isHospital
+        ? await requestService.createHospitalRequest(payload)
+        : await requestService.createRequest(payload);
       const createdId = res?.data?.id || res?.data?._id;
       if (createdId) {
         navigate(`/requests/${createdId}`, { state: { justCreated: true } });
@@ -104,7 +152,11 @@ const CreateBloodRequest = () => {
         navigate('/requester/my-requests');
       }
     } catch (err) {
-      const msg = err.response?.data?.message || err.response?.data?.errors?.join(', ') || 'Failed to create blood request.';
+      const msg =
+        err.response?.data?.detail ||
+        err.response?.data?.message ||
+        err.response?.data?.errors?.join(', ') ||
+        'Failed to create blood request.';
       setError(msg);
       setLoading(false);
     }
@@ -324,6 +376,81 @@ const CreateBloodRequest = () => {
                 value={formData.additionalMessage}
                 onChange={handleChange}
               />
+            </div>
+
+            {/* Hospital GPS Location & Geo-Radius Map Picker */}
+            <div className="col-12 mt-2">
+              <div className="p-3 bg-light rounded-3 border">
+                <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                  <div>
+                    <label className="form-label small fw-bold text-dark mb-0">
+                      Hospital / Emergency GPS Coordinates &amp; Search Radius
+                    </label>
+                    <div className="text-muted" style={{ fontSize: '0.78rem' }}>
+                      Capture browser GPS or click on the map so compatible donors are ranked by exact Haversine distance.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-danger rounded-pill fw-semibold d-inline-flex align-items-center gap-1"
+                    disabled={capturingGps}
+                    onClick={handleCaptureGps}
+                  >
+                    <FaLocationArrow size={11} />
+                    {capturingGps ? 'Locating GPS...' : 'Capture Hospital GPS'}
+                  </button>
+                </div>
+
+                <div className="row g-2 mb-3">
+                  <div className="col-sm-4">
+                    <label className="form-label small text-secondary mb-1">Latitude</label>
+                    <input
+                      type="number"
+                      step="any"
+                      name="lat"
+                      className="form-control form-control-sm"
+                      placeholder="e.g. 13.0633"
+                      value={formData.lat}
+                      onChange={handleChange}
+                    />
+                  </div>
+                  <div className="col-sm-4">
+                    <label className="form-label small text-secondary mb-1">Longitude</label>
+                    <input
+                      type="number"
+                      step="any"
+                      name="lng"
+                      className="form-control form-control-sm"
+                      placeholder="e.g. 80.2519"
+                      value={formData.lng}
+                      onChange={handleChange}
+                    />
+                  </div>
+                  <div className="col-sm-4">
+                    <label className="form-label small text-secondary mb-1">Initial Search Radius</label>
+                    <select
+                      name="searchRadiusKm"
+                      className="form-select form-select-sm"
+                      value={formData.searchRadiusKm}
+                      onChange={handleChange}
+                    >
+                      {[5, 10, 25, 50, 100].map((km) => (
+                        <option key={km} value={km}>{km} km</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <LiveDonorMap
+                  pickerMode
+                  hospitalLat={formData.lat !== '' ? formData.lat : 13.0633}
+                  hospitalLng={formData.lng !== '' ? formData.lng : 80.2519}
+                  hospitalName={formData.hospitalName || 'Hospital Pin'}
+                  radiusKm={formData.searchRadiusKm}
+                  onPickLocation={(lat, lng) => setFormData((prev) => ({ ...prev, lat, lng }))}
+                  height={250}
+                />
+              </div>
             </div>
           </div>
 

@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { notificationService } from '../services/notificationService';
 import { useAuth } from './AuthContext';
+import { useWebSocket } from './WebSocketContext';
 
 const NotificationContext = createContext(null);
 
 export const NotificationProvider = ({ children }) => {
   const { isAuthenticated } = useAuth();
+  const { subscribe } = useWebSocket();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -26,13 +28,28 @@ export const NotificationProvider = ({ children }) => {
   useEffect(() => {
     if (isAuthenticated) {
       fetchNotifications();
-      const interval = setInterval(fetchNotifications, 30000); // Poll every 30s
+      const interval = setInterval(fetchNotifications, 60000); // Fallback poll every 60s
       return () => clearInterval(interval);
     } else {
       setNotifications([]);
       setUnreadCount(0);
     }
   }, [isAuthenticated, fetchNotifications]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    return subscribe('notification', (payload) => {
+      const incoming = payload?.data;
+      if (!incoming) return;
+      setNotifications((prev) => {
+        if (incoming.id && prev.some((item) => item.id === incoming.id)) {
+          return prev;
+        }
+        return [incoming, ...prev].slice(0, 50);
+      });
+      setUnreadCount((prev) => prev + 1);
+    });
+  }, [isAuthenticated, subscribe]);
 
   const markAsRead = async (id) => {
     try {

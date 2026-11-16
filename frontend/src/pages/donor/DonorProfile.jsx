@@ -11,7 +11,12 @@ import {
   FaBell, 
   FaHistory,
   FaShieldAlt,
-  FaPlaneDeparture
+  FaPlaneDeparture,
+  FaNotesMedical,
+  FaStethoscope,
+  FaFileContract,
+  FaHeartbeat,
+  FaInfoCircle
 } from 'react-icons/fa';
 
 const DonorProfile = () => {
@@ -41,6 +46,16 @@ const DonorProfile = () => {
     shareLocationForMatching: donor.shareLocationForMatching !== undefined ? donor.shareLocationForMatching : true,
     notificationsEnabled: donor.notificationsEnabled !== undefined ? donor.notificationsEnabled : true,
     lastDonationDate: donor.lastDonationDate ? donor.lastDonationDate.slice(0, 10) : '',
+    // Medical Profile Fields
+    age: donor.age || '',
+    weight: donor.weight || '',
+    medicalHistory: '',
+    currentMedication: '',
+    allergies: '',
+    previousComplications: '',
+    healthDeclaration: Boolean(donor.healthDeclaration),
+    medicalReviewStatus: donor.medicalReviewStatus || 'PENDING',
+    clinicalNotes: '',
     // Current Donation Location (if travelling)
     currentDonationLocation: {
       state: initialCurrentState,
@@ -57,6 +72,38 @@ const DonorProfile = () => {
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Load registered medical profile
+  useEffect(() => {
+    let active = true;
+    const loadMedicalProfile = async () => {
+      try {
+        const res = await donorService.getMedicalProfile();
+        const mp = res?.data || res || {};
+        if (active && mp) {
+          setFormData(prev => ({
+            ...prev,
+            age: mp.age || prev.age || '',
+            weight: mp.weight || prev.weight || '',
+            medicalHistory: mp.medicalHistory || '',
+            currentMedication: mp.currentMedication || '',
+            allergies: mp.allergies || '',
+            previousComplications: mp.previousComplications || '',
+            healthDeclaration: Boolean(mp.healthDeclaration),
+            medicalReviewStatus: mp.medicalReviewStatus || prev.medicalReviewStatus || 'PENDING',
+            clinicalNotes: mp.clinicalNotes || ''
+          }));
+        }
+      } catch (err) {
+        console.warn('Could not load existing medical profile:', err);
+      }
+    };
+
+    if (user?.id) {
+      loadMedicalProfile();
+    }
+    return () => { active = false; };
+  }, [user]);
 
   useEffect(() => {
     if (user) {
@@ -178,9 +225,24 @@ const DonorProfile = () => {
 
     try {
       const donorId = donor.id || user?.id;
-      await donorService.updateDonorProfile(donorId, formData);
+      await Promise.all([
+        donorService.updateDonorProfile(donorId, formData),
+        donorService.saveMedicalProfile({
+          fullName: formData.name,
+          age: formData.age ? Number(formData.age) : undefined,
+          bloodGroup: formData.bloodGroup,
+          gender: formData.gender,
+          weight: formData.weight ? Number(formData.weight) : undefined,
+          lastDonationDate: formData.lastDonationDate,
+          medicalHistory: formData.medicalHistory,
+          currentMedication: formData.currentMedication,
+          allergies: formData.allergies,
+          previousComplications: formData.previousComplications,
+          healthDeclaration: formData.healthDeclaration
+        })
+      ]);
       await refreshUser();
-      setSuccessMsg('Your donor profile, location preferences, and availability have been updated.');
+      setSuccessMsg('Your donor profile, medical clearance declaration, and location settings have been updated.');
     } catch (err) {
       setErrorMsg(err.response?.data?.message || 'Failed to update donor profile.');
     } finally {
@@ -302,7 +364,147 @@ const DonorProfile = () => {
           </div>
         </div>
 
-        {/* 2. HOME LOCATION */}
+        {/* 2. DONOR MEDICAL REVIEW & HEALTH PROFILE */}
+        <div className="bc-card p-4 bg-white shadow-sm border rounded-3 mb-4">
+          <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2 mb-3 border-bottom pb-2">
+            <h5 className="fw-bold text-dark mb-0 d-flex align-items-center gap-2">
+              <FaNotesMedical className="text-danger" /> Donor Medical Profile & Health Declaration
+            </h5>
+            <div>
+              <span className={`badge rounded-pill px-3 py-1.5 ${
+                formData.medicalReviewStatus === 'VERIFIED' ? 'bg-success text-white' :
+                formData.medicalReviewStatus === 'REQUIRES_ASSESSMENT' ? 'bg-warning text-dark' :
+                formData.medicalReviewStatus === 'NOT_CLEARED' ? 'bg-danger text-white' :
+                'bg-secondary text-white'
+              }`}>
+                <FaStethoscope className="me-1" />
+                Medical Clearance: {formData.medicalReviewStatus === 'VERIFIED' ? 'Verified' : formData.medicalReviewStatus === 'REQUIRES_ASSESSMENT' ? 'Requires Assessment' : formData.medicalReviewStatus === 'NOT_CLEARED' ? 'Not Cleared' : 'Pending Review'}
+              </span>
+            </div>
+          </div>
+
+          <div className="p-3 bg-light rounded-3 border mb-3 small text-muted">
+            <div className="d-flex align-items-start gap-2">
+              <FaInfoCircle className="text-danger flex-shrink-0 mt-0.5" />
+              <div>
+                <strong>Medical Privacy Protection:</strong> Sensitive health histories, allergies, and medication details are encrypted and accessible exclusively to authorized clinical personnel at the donation centre.
+              </div>
+            </div>
+          </div>
+
+          <div className="row g-3">
+            <div className="col-md-3">
+              <label className="form-label small fw-bold text-secondary">Age</label>
+              <input
+                type="number"
+                name="age"
+                min="18"
+                max="75"
+                placeholder="Years (18-75)"
+                className="form-control"
+                value={formData.age}
+                onChange={handleChange}
+              />
+            </div>
+
+            <div className="col-md-3">
+              <label className="form-label small fw-bold text-secondary">Weight (kg)</label>
+              <input
+                type="number"
+                name="weight"
+                step="0.5"
+                min="40"
+                max="200"
+                placeholder="e.g. 65"
+                className="form-control"
+                value={formData.weight}
+                onChange={handleChange}
+              />
+              <small className="text-muted" style={{ fontSize: '11px' }}>Minimum 45 kg required for blood donation.</small>
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label small fw-bold text-secondary">Last Blood Donation Date</label>
+              <input
+                type="date"
+                name="lastDonationDate"
+                className="form-control"
+                value={formData.lastDonationDate}
+                onChange={handleChange}
+              />
+              <small className="text-muted" style={{ fontSize: '11px' }}>Standard 90-day cooldown applies between whole blood donations.</small>
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label small fw-bold text-secondary">Medical History (Optional)</label>
+              <textarea
+                name="medicalHistory"
+                rows="2"
+                className="form-control small"
+                placeholder="Any major surgeries, chronic conditions, or past cardiovascular history..."
+                value={formData.medicalHistory}
+                onChange={handleChange}
+              />
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label small fw-bold text-secondary">Current Medication (Optional)</label>
+              <textarea
+                name="currentMedication"
+                rows="2"
+                className="form-control small"
+                placeholder="List any ongoing prescription medications (antibiotics, blood thinners, etc.)..."
+                value={formData.currentMedication}
+                onChange={handleChange}
+              />
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label small fw-bold text-secondary">Allergies (Optional)</label>
+              <input
+                type="text"
+                name="allergies"
+                className="form-control"
+                placeholder="e.g. Penicillin, Latex, None"
+                value={formData.allergies}
+                onChange={handleChange}
+              />
+            </div>
+
+            <div className="col-md-6">
+              <label className="form-label small fw-bold text-secondary">Previous Donation Complications (Optional)</label>
+              <input
+                type="text"
+                name="previousComplications"
+                className="form-control"
+                placeholder="e.g. Dizziness, fainting, bruising, None"
+                value={formData.previousComplications}
+                onChange={handleChange}
+              />
+            </div>
+
+            <div className="col-12 mt-3 pt-3 border-top">
+              <div className="form-check">
+                <input
+                  type="checkbox"
+                  id="healthDeclarationCheck"
+                  name="healthDeclaration"
+                  className="form-check-input"
+                  checked={formData.healthDeclaration}
+                  onChange={handleChange}
+                />
+                <label htmlFor="healthDeclarationCheck" className="form-check-label fw-bold small text-dark">
+                  Health &amp; Voluntary Altruism Declaration
+                </label>
+                <div className="text-muted small mt-1" style={{ fontSize: '0.82rem' }}>
+                  I formally declare that all information provided regarding my health status, medical history, and clinical declarations is accurate, true, and up-to-date to the best of my knowledge. I understand that final clinical eligibility will be verified in person by qualified medical personnel at the donation centre.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. HOME LOCATION */}
         <div className="bc-card p-4 bg-white shadow-sm border rounded-3 mb-4">
           <h5 className="fw-bold text-dark mb-3 d-flex align-items-center gap-2 border-bottom pb-2">
             <FaMapMarkerAlt className="text-danger" /> Home Location

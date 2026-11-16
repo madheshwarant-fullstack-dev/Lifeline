@@ -52,18 +52,64 @@ class UserLoginSchema(BaseModel):
         return (v or "").strip().lower()
 
 class BloodRequestCreateSchema(BaseModel):
-    patientName: str = Field(..., min_length=2)
+    patientName: Optional[str] = Field(default="Patient In Need", min_length=2)
     bloodGroup: str = Field(...)
+    unitsRequired: Optional[int] = Field(default=None, ge=1, le=50)
     units: int = Field(default=1, ge=1, le=50)
     hospitalName: str = Field(..., min_length=2)
     hospitalAddress: Optional[str] = ""
     city: str = Field(..., min_length=2)
     state: Optional[str] = ""
-    contactPhone: str = Field(..., min_length=7)
+    pinCode: Optional[str] = ""
+    contactPhone: Optional[str] = None
+    contactNumber: Optional[str] = None
     contactName: Optional[str] = ""
     urgency: str = Field(default="NORMAL")
     requiredDate: Optional[str] = None
     notes: Optional[str] = ""
+    additionalMessage: Optional[str] = ""
+    lat: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    lng: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+    latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+    searchRadiusKm: Optional[int] = Field(default=25)
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class DonorLocationUpdateSchema(BaseModel):
+    lat: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    lng: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+    latitude: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+    accuracy: Optional[float] = Field(default=None, ge=0.0)
+    consent: Optional[bool] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class DonorLocationSharingSchema(BaseModel):
+    enabled: bool
+    consent: Optional[bool] = None
+    lat: Optional[float] = Field(default=None, ge=-90.0, le=90.0)
+    lng: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class RequestInviteSchema(BaseModel):
+    donorIds: Optional[List[str]] = None
+    radiusKm: Optional[int] = Field(default=25)
+    topN: Optional[int] = Field(default=10, ge=1, le=50)
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class RequestRespondSchema(BaseModel):
+    action: str  # ACCEPT / REJECT / DECLINE
+    note: Optional[str] = ""
+
+    model_config = ConfigDict(extra="ignore")
 
 class BloodRequestStatusUpdateSchema(BaseModel):
     status: str
@@ -124,6 +170,36 @@ class UserStatusUpdateSchema(BaseModel):
 
 class DonorVerifySchema(BaseModel):
     status: str  # VERIFIED / REJECTED / PENDING
+
+class DonorMedicalProfileSchema(BaseModel):
+    fullName: Optional[str] = None
+    age: Optional[int] = Field(default=None, ge=16, le=90)
+    bloodGroup: Optional[str] = None
+    gender: Optional[str] = None
+    weight: Optional[float] = Field(default=None, ge=30.0, le=250.0)
+    lastDonationDate: Optional[str] = None
+    medicalHistory: Optional[str] = ""
+    currentMedication: Optional[str] = ""
+    allergies: Optional[str] = ""
+    previousComplications: Optional[str] = ""
+    healthDeclaration: bool = Field(default=False, description="Explicit donor declaration of health truthfulness")
+
+    model_config = ConfigDict(extra="ignore")
+
+class DonorMedicalReviewUpdateSchema(BaseModel):
+    status: str = Field(..., description="VERIFIED, PENDING, REQUIRES_ASSESSMENT, NOT_CLEARED")
+    clinicalNotes: Optional[str] = ""
+
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        s = (v or "").strip().upper()
+        allowed = ['VERIFIED', 'PENDING', 'REQUIRES_ASSESSMENT', 'NOT_CLEARED']
+        if s not in allowed:
+            raise ValueError(f"Status must be one of: {', '.join(allowed)}")
+        return s
 
 class HospitalVerifySchema(BaseModel):
     isVerified: bool = True

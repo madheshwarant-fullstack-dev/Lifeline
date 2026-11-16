@@ -167,7 +167,7 @@ const Home = () => {
           <div className="row g-4">
             {/* Step 1 */}
             <div className="col-md-6 col-lg-3">
-              <div className="bc-card p-4 h-100 bg-white shadow-sm border-0 rounded-3 text-center d-flex flex-column align-items-center">
+              <div className="bc-card bc-card-hover p-4 h-100 bg-white shadow-sm border-0 rounded-3 text-center d-flex flex-column align-items-center">
                 <div className="rounded-circle bg-danger-subtle text-danger d-inline-flex align-items-center justify-content-center mb-3 fw-bold" style={{ width: '52px', height: '52px', fontSize: '20px' }}>
                   1
                 </div>
@@ -180,7 +180,7 @@ const Home = () => {
 
             {/* Step 2 */}
             <div className="col-md-6 col-lg-3">
-              <div className="bc-card p-4 h-100 bg-white shadow-sm border-0 rounded-3 text-center d-flex flex-column align-items-center">
+              <div className="bc-card bc-card-hover p-4 h-100 bg-white shadow-sm border-0 rounded-3 text-center d-flex flex-column align-items-center">
                 <div className="rounded-circle bg-danger-subtle text-danger d-inline-flex align-items-center justify-content-center mb-3 fw-bold" style={{ width: '52px', height: '52px', fontSize: '20px' }}>
                   2
                 </div>
@@ -193,7 +193,7 @@ const Home = () => {
 
             {/* Step 3 */}
             <div className="col-md-6 col-lg-3">
-              <div className="bc-card p-4 h-100 bg-white shadow-sm border-0 rounded-3 text-center d-flex flex-column align-items-center">
+              <div className="bc-card bc-card-hover p-4 h-100 bg-white shadow-sm border-0 rounded-3 text-center d-flex flex-column align-items-center">
                 <div className="rounded-circle bg-danger-subtle text-danger d-inline-flex align-items-center justify-content-center mb-3 fw-bold" style={{ width: '52px', height: '52px', fontSize: '20px' }}>
                   3
                 </div>
@@ -206,7 +206,7 @@ const Home = () => {
 
             {/* Step 4 */}
             <div className="col-md-6 col-lg-3">
-              <div className="bc-card p-4 h-100 bg-white shadow-sm border-0 rounded-3 text-center d-flex flex-column align-items-center">
+              <div className="bc-card bc-card-hover p-4 h-100 bg-white shadow-sm border-0 rounded-3 text-center d-flex flex-column align-items-center">
                 <div className="rounded-circle bg-danger-subtle text-danger d-inline-flex align-items-center justify-content-center mb-3 fw-bold" style={{ width: '52px', height: '52px', fontSize: '20px' }}>
                   4
                 </div>
@@ -255,7 +255,7 @@ const Home = () => {
             <div className="row g-3">
               {openRequests.map((req) => (
                 <div key={req.id || req._id} className="col-md-6 col-lg-3">
-                  <div className="bc-card p-3 h-100 d-flex flex-column bg-white shadow-sm border rounded-3">
+                  <div className="bc-card bc-card-hover p-3 h-100 d-flex flex-column bg-white shadow-sm border rounded-3">
                     <div className="d-flex justify-content-between align-items-center mb-2">
                       <span className="blood-badge-pill" style={{ width: '40px', height: '40px', fontSize: '1rem' }}>
                         {req.bloodGroup}
